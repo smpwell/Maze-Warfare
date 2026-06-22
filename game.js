@@ -4,6 +4,7 @@
 
   const setupPanel = document.getElementById("setup-panel");
   const startBtn = document.getElementById("start-btn");
+  const fullscreenBtn = document.getElementById("fullscreen-btn");
   const modeSelect = document.getElementById("mode-select");
   const difficultySelect = document.getElementById("difficulty-select");
   const difficultyLabel = document.getElementById("difficulty-label");
@@ -18,11 +19,12 @@
   const roundEl = document.getElementById("round-label");
   const statusEl = document.getElementById("status-label");
   const controlsText = document.getElementById("controls-text");
+  const arenaWrap = document.querySelector(".arena-wrap");
 
   const CELL = 52;
   const COLS = Math.floor(canvas.width / CELL);
   const ROWS = Math.floor(canvas.height / CELL);
-  const WALL = 5;
+  const WALL = 4;
   const MAZE_EXTRA_OPENINGS = 0.38;
   const BASE_TANK_SPEED = 128;
   const BULLET_SPEED = 285;
@@ -100,7 +102,8 @@
       id,
       x,
       y,
-      r: 13,
+      // Slightly smaller collision radius keeps maze lanes passable in tight corners.
+      r: 11,
       speed: BASE_TANK_SPEED,
       angle: 0,
       maxHp: 100,
@@ -930,6 +933,14 @@
     drawHpBars();
   }
 
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      arenaWrap.requestFullscreen();
+      return;
+    }
+    document.exitFullscreen();
+  }
+
   let previousTime = performance.now();
   let accumulator = 0;
 
@@ -982,6 +993,7 @@
   startBtn.addEventListener("click", startFromSetup);
   overlayBtn.addEventListener("click", resetForReplay);
   modeSelect.addEventListener("change", updateDifficultyVisibility);
+  fullscreenBtn.addEventListener("click", toggleFullscreen);
 
   document.addEventListener("keydown", (event) => {
     state.keys[event.code] = true;
