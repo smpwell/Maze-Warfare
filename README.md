@@ -13,4 +13,4 @@ Maze Warfare is a single-page, browser-based top-down arcade tank shooter.
 - Start, game-over, and victory screens
 
 ## Run
-Open `/home/runner/work/Maze-Warfare/Maze-Warfare/index.html` in a browser.
+Open `index.html` in a browser.
