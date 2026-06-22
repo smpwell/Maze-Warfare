@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Maze Warfare</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <h1>Maze Warfare</h1>
+      <div class="hud">
+        <span id="health">Health: 100</span>
+        <span id="score">Score: 0</span>
+        <span id="level">Level: 1</span>
+        <span id="powerup">Power-up: None</span>
+      </div>
+      <canvas id="game" width="900" height="600" aria-label="Maze Warfare game"></canvas>
+      <section id="overlay" class="overlay visible" aria-live="polite">
+        <h2 id="overlay-title">Maze Warfare</h2>
+        <p id="overlay-text">Top-down tank arcade action in a random maze.</p>
+        <button id="overlay-btn" type="button">Start Game</button>
+      </section>
+      <p class="controls">Controls: WASD move • Mouse aim • Left click shoot</p>
+    </main>
+    <script src="./game.js"></script>
+  </body>
+</html>
