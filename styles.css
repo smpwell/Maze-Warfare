@@ -1,10 +1,12 @@
 :root {
-  --bg: #08090f;
-  --panel: #111523;
-  --accent: #39ff8a;
-  --danger: #ff4f6d;
-  --text: #e6ebff;
-  --wall: #2a2f44;
+  --ink: #081024;
+  --paper: #f7f4eb;
+  --arcade-yellow: #ffd447;
+  --arcade-blue: #2f7cff;
+  --arcade-red: #ff4343;
+  --arcade-cyan: #4ff2ff;
+  --panel: #fff5cf;
+  --outline: #1a2d56;
 }
 
 * {
@@ -14,53 +16,101 @@
 body {
   margin: 0;
   min-height: 100vh;
+  padding: 18px 10px;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle at top, #1b2240 0%, var(--bg) 60%);
-  color: var(--text);
-  font-family: "Trebuchet MS", "Verdana", sans-serif;
+  color: var(--ink);
+  font-family: "Chalkboard SE", "Marker Felt", "Trebuchet MS", sans-serif;
+  background:
+    radial-gradient(circle at 15% 20%, #fff4a8 0%, #ffe064 24%, transparent 40%),
+    radial-gradient(circle at 80% 12%, #86efff 0%, #60b8ff 20%, transparent 44%),
+    linear-gradient(140deg, #ff7d37 0%, #ffde57 44%, #5fa5ff 100%);
 }
 
 .game-shell {
-  width: min(960px, 96vw);
+  width: min(1000px, 97vw);
   text-align: center;
 }
 
 h1 {
-  margin: 0 0 0.75rem;
-  letter-spacing: 0.08em;
+  margin: 0 0 10px;
   text-transform: uppercase;
-  color: var(--accent);
-  text-shadow: 0 0 12px #39ff8a55;
+  letter-spacing: 0.08em;
+  color: #fff;
+  text-shadow:
+    0 0 0 #fff,
+    0 4px 0 #183567,
+    0 0 18px #3a8dff;
+}
+
+.setup {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 3px solid #1d3b73;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 10px 20px #09275444;
+}
+
+.setup label {
+  text-align: left;
+  font-weight: 700;
+}
+
+.setup input,
+.setup select,
+.setup button {
+  width: 100%;
+  border: 2px solid var(--outline);
+  border-radius: 10px;
+  padding: 9px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.setup button {
+  grid-column: span 2;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  background: linear-gradient(180deg, #3386ff, #2259c8);
+}
+
+.setup button:hover {
+  filter: brightness(1.1);
 }
 
 .hud {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.4rem;
-  margin-bottom: 0.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
-.hud span {
-  background: var(--panel);
-  border: 1px solid #2e3554;
-  border-radius: 5px;
-  padding: 0.35rem;
-  font-size: 0.9rem;
+.hud div {
+  padding: 8px;
+  border: 2px solid var(--outline);
+  border-radius: 10px;
+  background: #fff;
+  font-weight: 700;
+}
+
+.arena-wrap {
+  position: relative;
+  border: 4px solid #1d2f57;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #0f1f44;
 }
 
 canvas {
+  display: block;
   width: 100%;
-  border: 3px solid #3c4467;
-  background: #070b14;
-  image-rendering: pixelated;
+  background: #0e1a3f;
   cursor: crosshair;
-}
-
-.controls {
-  margin-top: 0.5rem;
-  opacity: 0.85;
-  font-size: 0.9rem;
 }
 
 .overlay {
@@ -70,15 +120,11 @@ canvas {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.8rem;
-  background: #090c18dd;
-  color: var(--text);
+  padding: 20px;
+  gap: 10px;
+  color: #fff;
   text-align: center;
-  border-radius: 4px;
-}
-
-.game-shell {
-  position: relative;
+  background: linear-gradient(180deg, #00112ecc, #172f6ecf);
 }
 
 .overlay.visible {
@@ -87,18 +133,54 @@ canvas {
 
 .overlay h2 {
   margin: 0;
-  color: var(--accent);
+  font-size: clamp(1.4rem, 3vw, 2.2rem);
+  text-shadow: 0 0 14px #76b2ff;
+}
+
+.overlay p {
+  margin: 0;
+  font-size: 1.05rem;
+  max-width: 580px;
 }
 
 .overlay button {
-  border: 1px solid #2f7a4f;
-  background: #12311f;
-  color: var(--text);
-  padding: 0.5rem 0.9rem;
-  border-radius: 4px;
+  border: 2px solid #ffffff;
+  border-radius: 10px;
+  padding: 10px 16px;
+  color: #fff;
+  cursor: pointer;
   font-size: 1rem;
+  font-weight: 700;
+  background: #ff4d4d;
 }
 
 .overlay button:hover {
-  background: #18492e;
+  filter: brightness(1.12);
+}
+
+.controls {
+  margin: 10px 0 0;
+  padding: 8px;
+  border-radius: 10px;
+  background: #ffffffcf;
+  border: 2px solid #1a2d56;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .setup {
+    grid-template-columns: 1fr;
+  }
+
+  .setup button {
+    grid-column: span 1;
+  }
+
+  .hud {
+    grid-template-columns: 1fr;
+  }
+
+  .controls {
+    font-size: 0.92rem;
+  }
 }

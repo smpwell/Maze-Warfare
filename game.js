@@ -1,44 +1,133 @@
 (() => {
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
+
+  const setupPanel = document.getElementById("setup-panel");
+  const startBtn = document.getElementById("start-btn");
+  const modeSelect = document.getElementById("mode-select");
+  const difficultySelect = document.getElementById("difficulty-select");
+  const difficultyLabel = document.getElementById("difficulty-label");
+  const playerNameInput = document.getElementById("player-name");
+
   const overlay = document.getElementById("overlay");
   const overlayTitle = document.getElementById("overlay-title");
   const overlayText = document.getElementById("overlay-text");
   const overlayBtn = document.getElementById("overlay-btn");
-  const healthEl = document.getElementById("health");
-  const scoreEl = document.getElementById("score");
-  const levelEl = document.getElementById("level");
-  const powerupEl = document.getElementById("powerup");
 
-  const mazeCols = 18;
-  const mazeRows = 12;
-  const cellSize = 50;
-  const maxLevel = 5;
-  const powerupSpawnChance = 0.65;
-  const maxDeltaTime = 0.033;
+  const scoreboardEl = document.getElementById("scoreboard");
+  const roundEl = document.getElementById("round-label");
+  const statusEl = document.getElementById("status-label");
+  const controlsText = document.getElementById("controls-text");
+
+  const CELL = 40;
+  const COLS = Math.floor(canvas.width / CELL);
+  const ROWS = Math.floor(canvas.height / CELL);
+  const WALL = 6;
+
+  const FIXED_STEP = 1 / 30;
+  const MAX_FRAME = 0.1;
 
   const state = {
-    running: false,
-    won: false,
-    gameOver: false,
-    level: 1,
-    score: 0,
-    keys: {},
-    mouse: { x: canvas.width / 2, y: canvas.height / 2, down: false },
+    phase: "idle",
+    mode: "ai",
+    aiDifficulty: "medium",
+    player1Name: "Player 1",
+    player2Name: "Player 2",
+    round: 1,
+    wins1: 0,
+    wins2: 0,
+    targetWins: 3,
     walls: [],
-    player: null,
-    enemies: [],
+    tanks: [],
     bullets: [],
-    powerups: [],
-    activePowerup: { type: null, timer: 0 },
-    flashTimer: 0,
+    particles: [],
+    keys: {},
+    prevKeys: {},
+    mouse: { x: canvas.width * 0.5, y: canvas.height * 0.5, down: false },
+    betweenRoundsTimer: 0,
+    roundWinnerId: 0,
+    aiTarget: { x: 0, y: 0, timer: 0 },
   };
 
-  const rand = (min, max) => Math.random() * (max - min) + min;
+  function rand(min, max) {
+    return Math.random() * (max - min) + min;
+  }
 
-  function generateMaze() {
-    const grid = Array.from({ length: mazeRows }, () =>
-      Array.from({ length: mazeCols }, () => ({ visited: false, walls: [1, 1, 1, 1] }))
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  function intersectsRectCircle(rect, x, y, r) {
+    const nx = clamp(x, rect.x, rect.x + rect.w);
+    const ny = clamp(y, rect.y, rect.y + rect.h);
+    const dx = x - nx;
+    const dy = y - ny;
+    return dx * dx + dy * dy <= r * r;
+  }
+
+  function lineOfSight(a, b) {
+    const segments = 26;
+    for (let i = 1; i < segments; i += 1) {
+      const x = a.x + (b.x - a.x) * (i / segments);
+      const y = a.y + (b.y - a.y) * (i / segments);
+      if (state.walls.some((wall) => intersectsRectCircle(wall, x, y, 2))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function spawnTank(id, x, y, color) {
+    return {
+      id,
+      x,
+      y,
+      r: 15,
+      speed: 145,
+      angle: 0,
+      hp: 100,
+      reload: 0,
+      color,
+      alive: true,
+      lastMoveX: id === 1 ? 1 : -1,
+      lastMoveY: 0,
+    };
+  }
+
+  function getAiProfile() {
+    if (state.aiDifficulty === "easy") {
+      return {
+        speedMult: 0.82,
+        reload: 0.6,
+        shotRange: 320,
+        retargetMin: 1.2,
+        retargetMax: 1.8,
+        aimJitter: 0.2,
+      };
+    }
+    if (state.aiDifficulty === "hard") {
+      return {
+        speedMult: 1.2,
+        reload: 0.2,
+        shotRange: 560,
+        retargetMin: 0.45,
+        retargetMax: 0.8,
+        aimJitter: 0.04,
+      };
+    }
+    return {
+      speedMult: 1,
+      reload: 0.32,
+      shotRange: 460,
+      retargetMin: 0.8,
+      retargetMax: 1.2,
+      aimJitter: 0.1,
+    };
+  }
+
+  function generateMazeWalls() {
+    const grid = Array.from({ length: ROWS }, () =>
+      Array.from({ length: COLS }, () => ({ visited: false, walls: [1, 1, 1, 1] }))
     );
     const stack = [[0, 0]];
     grid[0][0].visited = true;
@@ -49,317 +138,76 @@
       [-1, 0, 3, 1],
     ];
 
-    while (stack.length) {
+    while (stack.length > 0) {
       const [cx, cy] = stack[stack.length - 1];
-      const neighbors = dirs
-        .map(([dx, dy, from, to]) => ({ nx: cx + dx, ny: cy + dy, from, to }))
-        .filter(({ nx, ny }) => nx >= 0 && ny >= 0 && nx < mazeCols && ny < mazeRows && !grid[ny][nx].visited);
+      const choices = dirs
+        .map(([dx, dy, outWall, inWall]) => ({ nx: cx + dx, ny: cy + dy, outWall, inWall }))
+        .filter(({ nx, ny }) => nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS && !grid[ny][nx].visited);
 
-      if (!neighbors.length) {
+      if (choices.length === 0) {
         stack.pop();
-        continue;
+      } else {
+        const pick = choices[(Math.random() * choices.length) | 0];
+        grid[cy][cx].walls[pick.outWall] = 0;
+        grid[pick.ny][pick.nx].walls[pick.inWall] = 0;
+        grid[pick.ny][pick.nx].visited = true;
+        stack.push([pick.nx, pick.ny]);
       }
-
-      const next = neighbors[(Math.random() * neighbors.length) | 0];
-      grid[cy][cx].walls[next.from] = 0;
-      grid[next.ny][next.nx].walls[next.to] = 0;
-      grid[next.ny][next.nx].visited = true;
-      stack.push([next.nx, next.ny]);
     }
 
     const walls = [];
-    for (let y = 0; y < mazeRows; y++) {
-      for (let x = 0; x < mazeCols; x++) {
-        const c = grid[y][x];
-        const px = x * cellSize;
-        const py = y * cellSize;
-        const t = 6;
-        if (c.walls[0]) walls.push({ x: px, y: py, w: cellSize, h: t });
-        if (c.walls[1]) walls.push({ x: px + cellSize - t, y: py, w: t, h: cellSize });
-        if (c.walls[2]) walls.push({ x: px, y: py + cellSize - t, w: cellSize, h: t });
-        if (c.walls[3]) walls.push({ x: px, y: py, w: t, h: cellSize });
+    for (let y = 0; y < ROWS; y += 1) {
+      for (let x = 0; x < COLS; x += 1) {
+        const cell = grid[y][x];
+        const px = x * CELL;
+        const py = y * CELL;
+
+        if (cell.walls[0]) walls.push({ x: px, y: py, w: CELL, h: WALL });
+        if (cell.walls[1]) walls.push({ x: px + CELL - WALL, y: py, w: WALL, h: CELL });
+        if (cell.walls[2]) walls.push({ x: px, y: py + CELL - WALL, w: CELL, h: WALL });
+        if (cell.walls[3]) walls.push({ x: px, y: py, w: WALL, h: CELL });
       }
     }
     return walls;
   }
 
-  function intersectsRectCircle(rect, x, y, r) {
-    const nx = Math.max(rect.x, Math.min(x, rect.x + rect.w));
-    const ny = Math.max(rect.y, Math.min(y, rect.y + rect.h));
-    const dx = x - nx;
-    const dy = y - ny;
-    return dx * dx + dy * dy < r * r;
-  }
-
-  function lineOfSight(a, b) {
-    const steps = 20;
-    for (let i = 1; i < steps; i++) {
-      const x = a.x + (b.x - a.x) * (i / steps);
-      const y = a.y + (b.y - a.y) * (i / steps);
-      if (state.walls.some((w) => intersectsRectCircle(w, x, y, 2))) return false;
+  function isSpawnValid(x, y, radius = 15) {
+    if (x < radius + 10 || y < radius + 10 || x > canvas.width - radius - 10 || y > canvas.height - radius - 10) {
+      return false;
     }
-    return true;
+    return !state.walls.some((wall) => intersectsRectCircle(wall, x, y, radius + 5));
   }
 
-  function spawnTank(x, y, isEnemy = false) {
-    return {
-      x,
-      y,
-      r: 14,
-      speed: isEnemy ? 95 + state.level * 8 : 135,
-      angle: 0,
-      hp: isEnemy ? 30 + state.level * 8 : 100,
-      shootCd: 0,
-      patrolTarget: { x, y },
-    };
-  }
-
-  function validSpawn(x, y, radius = 14) {
-    return !state.walls.some((w) => intersectsRectCircle(w, x, y, radius + 6));
-  }
-
-  function randomSpawn() {
-    for (let i = 0; i < 1000; i++) {
-      const x = rand(30, canvas.width - 30);
-      const y = rand(30, canvas.height - 30);
-      if (validSpawn(x, y)) return { x, y };
+  function randomSpawn(awayFrom) {
+    for (let i = 0; i < 900; i += 1) {
+      const x = rand(26, canvas.width - 26);
+      const y = rand(26, canvas.height - 26);
+      if (!isSpawnValid(x, y)) {
+        continue;
+      }
+      if (awayFrom && Math.hypot(x - awayFrom.x, y - awayFrom.y) < 280) {
+        continue;
+      }
+      return { x, y };
     }
-    return { x: 40, y: 40 };
+    return awayFrom ? { x: canvas.width - 80, y: canvas.height - 80 } : { x: 80, y: 80 };
   }
 
-  function setupLevel(level) {
-    state.walls = generateMaze();
-    const p = randomSpawn();
-    state.player = spawnTank(p.x, p.y, false);
-    state.player.hp = Math.min(100, state.player.hp + (level > 1 ? 20 : 0));
+  function newRoundArena() {
+    state.walls = generateMazeWalls();
+    const spawn1 = randomSpawn();
+    const spawn2 = randomSpawn(spawn1);
+    state.tanks = [spawnTank(1, spawn1.x, spawn1.y, "#2f7cff"), spawnTank(2, spawn2.x, spawn2.y, "#ff4343")];
     state.bullets = [];
-    state.powerups = [];
-    state.activePowerup = { type: null, timer: 0 };
-
-    const enemyCount = Math.min(2 + level, 8);
-    state.enemies = Array.from({ length: enemyCount }, () => {
-      let e;
-      do {
-        const s = randomSpawn();
-        e = spawnTank(s.x, s.y, true);
-      } while (Math.hypot(e.x - state.player.x, e.y - state.player.y) < 150);
-      return e;
-    });
-
-    if (Math.random() < powerupSpawnChance) {
-      const pu = randomSpawn();
-      const types = ["rapid fire", "shield", "speed boost"];
-      state.powerups.push({ ...pu, r: 10, type: types[(Math.random() * types.length) | 0] });
-    }
-
-    levelEl.textContent = `Level: ${state.level}`;
+    state.particles = [];
+    state.aiTarget = { x: spawn1.x, y: spawn1.y, timer: 0 };
   }
 
-  function shoot(shooter, targetX, targetY, enemyShot = false) {
-    if (shooter.shootCd > 0) return;
-    const angle = Math.atan2(targetY - shooter.y, targetX - shooter.x);
-    const speed = enemyShot ? 210 : 260;
-    state.bullets.push({
-      x: shooter.x,
-      y: shooter.y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      ownerEnemy: enemyShot,
-      bounces: 2,
-      life: 3.2,
-      r: 4,
-    });
-    const fireRate = !enemyShot && state.activePowerup.type === "rapid fire" ? 0.12 : enemyShot ? 0.9 : 0.28;
-    shooter.shootCd = fireRate;
-  }
-
-  function moveTank(tank, dt, moveX, moveY) {
-    const len = Math.hypot(moveX, moveY) || 1;
-    const vx = (moveX / len) * tank.speed * dt;
-    const vy = (moveY / len) * tank.speed * dt;
-    const nx = tank.x + vx;
-    const ny = tank.y + vy;
-
-    if (!state.walls.some((w) => intersectsRectCircle(w, nx, tank.y, tank.r))) tank.x = nx;
-    if (!state.walls.some((w) => intersectsRectCircle(w, tank.x, ny, tank.r))) tank.y = ny;
-
-    tank.x = Math.max(tank.r, Math.min(canvas.width - tank.r, tank.x));
-    tank.y = Math.max(tank.r, Math.min(canvas.height - tank.r, tank.y));
-  }
-
-  function updatePlayer(dt) {
-    const player = state.player;
-    if (!player) return;
-
-    let mx = 0;
-    let my = 0;
-    if (state.keys.KeyW) my -= 1;
-    if (state.keys.KeyS) my += 1;
-    if (state.keys.KeyA) mx -= 1;
-    if (state.keys.KeyD) mx += 1;
-
-    const speedMul = state.activePowerup.type === "speed boost" ? 1.45 : 1;
-    const oldSpeed = player.speed;
-    player.speed = 135 * speedMul;
-    moveTank(player, dt, mx, my);
-    player.speed = oldSpeed;
-
-    player.angle = Math.atan2(state.mouse.y - player.y, state.mouse.x - player.x);
-    if (state.mouse.down) shoot(player, state.mouse.x, state.mouse.y, false);
-  }
-
-  function updateEnemies(dt) {
-    const player = state.player;
-    state.enemies.forEach((enemy) => {
-      const seesPlayer = lineOfSight(enemy, player);
-      let tx = enemy.patrolTarget.x;
-      let ty = enemy.patrolTarget.y;
-
-      if (seesPlayer) {
-        tx = player.x;
-        ty = player.y;
-        if (Math.hypot(player.x - enemy.x, player.y - enemy.y) < 360) {
-          shoot(enemy, player.x, player.y, true);
-        }
-      } else if (Math.hypot(tx - enemy.x, ty - enemy.y) < 12) {
-        enemy.patrolTarget = randomSpawn();
-      }
-
-      enemy.angle = Math.atan2(ty - enemy.y, tx - enemy.x);
-      moveTank(enemy, dt, Math.cos(enemy.angle), Math.sin(enemy.angle));
-    });
-  }
-
-  function updateBullets(dt) {
-    for (const b of state.bullets) {
-      b.life -= dt;
-      b.x += b.vx * dt;
-      b.y += b.vy * dt;
-
-      if (b.x <= 0 || b.x >= canvas.width) {
-        b.vx *= -1;
-        b.bounces -= 1;
-        b.x = Math.max(1, Math.min(canvas.width - 1, b.x));
-      }
-      if (b.y <= 0 || b.y >= canvas.height) {
-        b.vy *= -1;
-        b.bounces -= 1;
-        b.y = Math.max(1, Math.min(canvas.height - 1, b.y));
-      }
-
-      for (const w of state.walls) {
-        if (!intersectsRectCircle(w, b.x, b.y, b.r)) continue;
-        const cx = w.x + w.w / 2;
-        const cy = w.y + w.h / 2;
-        const dx = b.x - cx;
-        const dy = b.y - cy;
-        if (Math.abs(dx / (w.w || 1)) > Math.abs(dy / (w.h || 1))) b.vx *= -1;
-        else b.vy *= -1;
-        b.bounces -= 1;
-        break;
-      }
-
-      if (!b.ownerEnemy) {
-        for (const e of state.enemies) {
-          if (Math.hypot(b.x - e.x, b.y - e.y) < e.r + b.r) {
-            e.hp -= 25;
-            b.life = 0;
-            if (e.hp <= 0) state.score += 100;
-            break;
-          }
-        }
-      } else {
-        const p = state.player;
-        if (Math.hypot(b.x - p.x, b.y - p.y) < p.r + b.r) {
-          const protectedByShield = state.activePowerup.type === "shield";
-          if (!protectedByShield) {
-            p.hp -= 14;
-            state.flashTimer = 0.08;
-          }
-          b.life = 0;
-        }
-      }
-    }
-
-    state.enemies = state.enemies.filter((e) => e.hp > 0);
-    state.bullets = state.bullets.filter((b) => b.life > 0 && b.bounces >= 0);
-  }
-
-  function updatePowerups(dt) {
-    const p = state.player;
-    state.powerups = state.powerups.filter((pu) => {
-      if (Math.hypot(p.x - pu.x, p.y - pu.y) < p.r + pu.r) {
-        state.activePowerup = { type: pu.type, timer: 9 };
-        return false;
-      }
-      return true;
-    });
-
-    if (state.activePowerup.timer > 0) {
-      state.activePowerup.timer -= dt;
-      if (state.activePowerup.timer <= 0) state.activePowerup = { type: null, timer: 0 };
-    }
-  }
-
-  function drawTank(tank, color, barrel = "#d6dcf5") {
-    if (!tank) return;
-    ctx.save();
-    ctx.translate(tank.x, tank.y);
-    ctx.rotate(tank.angle);
-    ctx.fillStyle = color;
-    ctx.fillRect(-tank.r, -tank.r, tank.r * 2, tank.r * 2);
-    ctx.fillStyle = barrel;
-    ctx.fillRect(0, -3, tank.r + 10, 6);
-    ctx.restore();
-  }
-
-  function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#090f1f";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    for (const w of state.walls) {
-      ctx.fillStyle = "#2a2f44";
-      ctx.fillRect(w.x, w.y, w.w, w.h);
-    }
-
-    for (const pu of state.powerups) {
-      ctx.fillStyle = pu.type === "shield" ? "#44b4ff" : pu.type === "rapid fire" ? "#ffc64d" : "#73ff9f";
-      ctx.beginPath();
-      ctx.arc(pu.x, pu.y, pu.r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    drawTank(state.player, "#39ff8a");
-    for (const e of state.enemies) drawTank(e, "#ff4f6d");
-
-    for (const b of state.bullets) {
-      ctx.fillStyle = b.ownerEnemy ? "#ff8ba1" : "#d8ff7a";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    if (state.flashTimer > 0) {
-      ctx.fillStyle = "rgba(255, 79, 109, 0.2)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-  }
-
-  function updateHud() {
-    healthEl.textContent = `Health: ${Math.max(0, Math.ceil(state.player.hp))}`;
-    scoreEl.textContent = `Score: ${state.score}`;
-    levelEl.textContent = `Level: ${state.level}`;
-    const active = state.activePowerup.type
-      ? `${state.activePowerup.type} (${Math.ceil(state.activePowerup.timer)}s)`
-      : "None";
-    powerupEl.textContent = `Power-up: ${active}`;
-  }
-
-  function showOverlay(title, text, buttonText) {
+  function showOverlay(title, text, buttonVisible = false, buttonText = "Play Again") {
     overlayTitle.textContent = title;
     overlayText.textContent = text;
     overlayBtn.textContent = buttonText;
+    overlayBtn.hidden = !buttonVisible;
     overlay.classList.add("visible");
   }
 
@@ -367,71 +215,481 @@
     overlay.classList.remove("visible");
   }
 
-  function endGame(victory = false) {
-    state.running = false;
-    state.gameOver = !victory;
-    state.won = victory;
-    if (victory) showOverlay("Victory!", `Final score: ${state.score}`, "Play Again");
-    else showOverlay("Game Over", `Final score: ${state.score}`, "Retry");
+  function updateHud() {
+    scoreboardEl.textContent = `${state.player1Name}: ${state.wins1} | ${state.player2Name}: ${state.wins2}`;
+    roundEl.textContent = `Round: ${state.round}`;
+
+    if (state.phase === "playing") {
+      statusEl.textContent = "Status: Battle in progress";
+    } else if (state.phase === "countdown") {
+      statusEl.textContent = `Status: Next round in ${Math.ceil(state.betweenRoundsTimer)}...`;
+    } else if (state.phase === "round-end") {
+      statusEl.textContent = "Status: Round complete";
+    } else if (state.phase === "match-over") {
+      statusEl.textContent = "Status: Match over";
+    } else {
+      statusEl.textContent = "Status: Waiting to start";
+    }
   }
 
-  function nextLevel() {
-    if (state.level >= maxLevel) {
-      endGame(true);
+  function startCountdown(seconds, withRoundMessage) {
+    state.phase = "countdown";
+    state.betweenRoundsTimer = seconds;
+    if (withRoundMessage) {
+      const winnerName = state.roundWinnerId === 1 ? state.player1Name : state.player2Name;
+      showOverlay(
+        `Player ${state.roundWinnerId} Wins Round`,
+        `${winnerName} scored this round. Next round starts in ${Math.ceil(state.betweenRoundsTimer)}...`
+      );
+    } else {
+      showOverlay("Get Ready", `Round ${state.round} starts in ${Math.ceil(state.betweenRoundsTimer)}...`);
+    }
+  }
+
+  function beginMatch() {
+    state.round = 1;
+    state.wins1 = 0;
+    state.wins2 = 0;
+    state.phase = "countdown";
+    state.roundWinnerId = 0;
+    newRoundArena();
+    startCountdown(3, false);
+    updateHud();
+  }
+
+  function moveTank(tank, dt, moveX, moveY) {
+    const mag = Math.hypot(moveX, moveY) || 1;
+    const dx = (moveX / mag) * tank.speed * dt;
+    const dy = (moveY / mag) * tank.speed * dt;
+    const nx = tank.x + dx;
+    const ny = tank.y + dy;
+
+    if (!state.walls.some((wall) => intersectsRectCircle(wall, nx, tank.y, tank.r))) {
+      tank.x = nx;
+    }
+    if (!state.walls.some((wall) => intersectsRectCircle(wall, tank.x, ny, tank.r))) {
+      tank.y = ny;
+    }
+
+    tank.x = clamp(tank.x, tank.r, canvas.width - tank.r);
+    tank.y = clamp(tank.y, tank.r, canvas.height - tank.r);
+
+    if (Math.abs(moveX) > 0 || Math.abs(moveY) > 0) {
+      tank.lastMoveX = moveX;
+      tank.lastMoveY = moveY;
+    }
+  }
+
+  function shootBullet(tank, angle, cooldown = 0.32) {
+    if (!tank.alive || tank.reload > 0) {
       return;
     }
-    state.level += 1;
-    setupLevel(state.level);
+    const muzzle = tank.r + 9;
+    const speed = 285;
+    state.bullets.push({
+      ownerId: tank.id,
+      x: tank.x + Math.cos(angle) * muzzle,
+      y: tank.y + Math.sin(angle) * muzzle,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 4,
+      life: 2.2,
+      bounces: 1,
+    });
+    tank.reload = cooldown;
   }
 
-  function resetGame() {
-    state.level = 1;
-    state.score = 0;
-    state.gameOver = false;
-    state.won = false;
-    setupLevel(1);
-    state.running = true;
-    hideOverlay();
+  function isPressed(code) {
+    return Boolean(state.keys[code]);
   }
 
-  let last = performance.now();
-  function tick(now) {
-    const dt = Math.min(maxDeltaTime, (now - last) / 1000);
-    last = now;
+  function justPressed(code) {
+    return Boolean(state.keys[code]) && !Boolean(state.prevKeys[code]);
+  }
 
-    if (state.running) {
-      state.flashTimer = Math.max(0, state.flashTimer - dt);
-      state.player.shootCd = Math.max(0, state.player.shootCd - dt);
-      state.enemies.forEach((e) => (e.shootCd = Math.max(0, e.shootCd - dt)));
+  function updatePlayerOne(dt) {
+    const p1 = state.tanks[0];
+    let mx = 0;
+    let my = 0;
+    if (isPressed("KeyW")) my -= 1;
+    if (isPressed("KeyS")) my += 1;
+    if (isPressed("KeyA")) mx -= 1;
+    if (isPressed("KeyD")) mx += 1;
 
-      updatePlayer(dt);
-      updateEnemies(dt);
-      updateBullets(dt);
-      updatePowerups(dt);
+    moveTank(p1, dt, mx, my);
+    p1.angle = Math.atan2(state.mouse.y - p1.y, state.mouse.x - p1.x);
 
-      if (state.player.hp <= 0) endGame(false);
-      if (state.enemies.length === 0 && state.running) nextLevel();
+    if (state.mouse.down || justPressed("KeyF")) {
+      shootBullet(p1, p1.angle);
+    }
+  }
 
-      updateHud();
+  function updatePlayerTwoHuman(dt) {
+    const p2 = state.tanks[1];
+    let mx = 0;
+    let my = 0;
+    if (isPressed("ArrowUp")) my -= 1;
+    if (isPressed("ArrowDown")) my += 1;
+    if (isPressed("ArrowLeft")) mx -= 1;
+    if (isPressed("ArrowRight")) mx += 1;
+
+    moveTank(p2, dt, mx, my);
+    if (mx !== 0 || my !== 0) {
+      p2.angle = Math.atan2(my, mx);
+    } else {
+      p2.angle = Math.atan2(p2.lastMoveY, p2.lastMoveX);
     }
 
-    draw();
-    requestAnimationFrame(tick);
+    if (justPressed("KeyL")) {
+      shootBullet(p2, p2.angle);
+    }
   }
 
-  overlayBtn.addEventListener("click", resetGame);
+  function updatePlayerTwoAI(dt) {
+    const p1 = state.tanks[0];
+    const ai = state.tanks[1];
+    const aiProfile = getAiProfile();
+    ai.speed = 145 * aiProfile.speedMult;
+    const sees = lineOfSight(ai, p1);
 
-  document.addEventListener("keydown", (e) => {
-    state.keys[e.code] = true;
+    state.aiTarget.timer -= dt;
+    if (sees) {
+      state.aiTarget.x = p1.x;
+      state.aiTarget.y = p1.y;
+      state.aiTarget.timer = 0.5;
+    } else if (state.aiTarget.timer <= 0 || Math.hypot(ai.x - state.aiTarget.x, ai.y - state.aiTarget.y) < 18) {
+      const next = randomSpawn(p1);
+      state.aiTarget.x = next.x;
+      state.aiTarget.y = next.y;
+      state.aiTarget.timer = rand(aiProfile.retargetMin, aiProfile.retargetMax);
+    }
+
+    const ax = state.aiTarget.x - ai.x;
+    const ay = state.aiTarget.y - ai.y;
+    moveTank(ai, dt, ax, ay);
+    ai.angle = Math.atan2(p1.y - ai.y, p1.x - ai.x);
+
+    if (sees && Math.hypot(p1.x - ai.x, p1.y - ai.y) < aiProfile.shotRange) {
+      const jitteredAngle = ai.angle + rand(-aiProfile.aimJitter, aiProfile.aimJitter);
+      shootBullet(ai, jitteredAngle, aiProfile.reload);
+    }
+  }
+
+  function updateBullets(dt) {
+    for (const bullet of state.bullets) {
+      bullet.life -= dt;
+      bullet.x += bullet.vx * dt;
+      bullet.y += bullet.vy * dt;
+
+      if (bullet.x < bullet.r || bullet.x > canvas.width - bullet.r) {
+        bullet.vx *= -1;
+        bullet.bounces -= 1;
+        bullet.x = clamp(bullet.x, bullet.r, canvas.width - bullet.r);
+      }
+      if (bullet.y < bullet.r || bullet.y > canvas.height - bullet.r) {
+        bullet.vy *= -1;
+        bullet.bounces -= 1;
+        bullet.y = clamp(bullet.y, bullet.r, canvas.height - bullet.r);
+      }
+
+      for (const wall of state.walls) {
+        if (!intersectsRectCircle(wall, bullet.x, bullet.y, bullet.r)) {
+          continue;
+        }
+        const centerX = wall.x + wall.w * 0.5;
+        const centerY = wall.y + wall.h * 0.5;
+        const dx = bullet.x - centerX;
+        const dy = bullet.y - centerY;
+        if (Math.abs(dx / wall.w) > Math.abs(dy / wall.h)) {
+          bullet.vx *= -1;
+        } else {
+          bullet.vy *= -1;
+        }
+        bullet.bounces -= 1;
+        break;
+      }
+
+      for (const tank of state.tanks) {
+        if (!tank.alive || tank.id === bullet.ownerId) {
+          continue;
+        }
+        if (Math.hypot(tank.x - bullet.x, tank.y - bullet.y) <= tank.r + bullet.r) {
+          tank.hp -= 50;
+          bullet.life = 0;
+          if (tank.hp <= 0) {
+            tank.alive = false;
+            spawnExplosion(tank.x, tank.y, tank.color);
+          }
+          break;
+        }
+      }
+    }
+
+    state.bullets = state.bullets.filter((bullet) => bullet.life > 0 && bullet.bounces >= 0);
+  }
+
+  function spawnExplosion(x, y, baseColor) {
+    for (let i = 0; i < 34; i += 1) {
+      const angle = rand(0, Math.PI * 2);
+      const speed = rand(40, 260);
+      state.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        size: rand(3, 7),
+        life: rand(0.45, 0.95),
+        maxLife: 1,
+        color: i % 2 === 0 ? "#ffd447" : baseColor,
+      });
+    }
+  }
+
+  function updateParticles(dt) {
+    for (const p of state.particles) {
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= 0.96;
+      p.vy *= 0.96;
+    }
+    state.particles = state.particles.filter((p) => p.life > 0);
+  }
+
+  function onRoundWin(winnerId) {
+    state.phase = "round-end";
+    state.roundWinnerId = winnerId;
+
+    if (winnerId === 1) {
+      state.wins1 += 1;
+    } else {
+      state.wins2 += 1;
+    }
+    updateHud();
+
+    if (state.wins1 >= state.targetWins || state.wins2 >= state.targetWins) {
+      const winnerName = winnerId === 1 ? state.player1Name : state.player2Name;
+      state.phase = "match-over";
+      showOverlay("Match Winner!", `${winnerName} wins the match ${state.targetWins}-${Math.min(state.wins1, state.wins2)}.`, true);
+      return;
+    }
+
+    state.round += 1;
+    newRoundArena();
+    startCountdown(3, true);
+  }
+
+  function updateRoundFlow(dt) {
+    if (state.phase === "countdown") {
+      state.betweenRoundsTimer -= dt;
+      const seconds = Math.max(0, Math.ceil(state.betweenRoundsTimer));
+      overlayText.textContent = overlayText.textContent.replace(/\d+\.\.\.$/, `${seconds}...`);
+      if (state.betweenRoundsTimer <= 0) {
+        state.phase = "playing";
+        hideOverlay();
+      }
+      return;
+    }
+
+    if (state.phase !== "playing") {
+      return;
+    }
+
+    const p1Alive = state.tanks[0] && state.tanks[0].alive;
+    const p2Alive = state.tanks[1] && state.tanks[1].alive;
+
+    if (!p1Alive && p2Alive) {
+      onRoundWin(2);
+    } else if (!p2Alive && p1Alive) {
+      onRoundWin(1);
+    }
+  }
+
+  function update(dt) {
+    for (const tank of state.tanks) {
+      tank.reload = Math.max(0, tank.reload - dt);
+    }
+
+    if (state.phase === "playing") {
+      updatePlayerOne(dt);
+      if (state.mode === "2p") {
+        updatePlayerTwoHuman(dt);
+      } else {
+        updatePlayerTwoAI(dt);
+      }
+      updateBullets(dt);
+    }
+
+    updateParticles(dt);
+    updateRoundFlow(dt);
+    updateHud();
+    state.prevKeys = { ...state.keys };
+  }
+
+  function drawBackground() {
+    const g = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    g.addColorStop(0, "#07173a");
+    g.addColorStop(1, "#153067");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = "#a3d8ff";
+    for (let x = 0; x < canvas.width; x += CELL) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += CELL) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width, y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawWalls() {
+    for (const wall of state.walls) {
+      ctx.fillStyle = "#f8e38e";
+      ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+      ctx.fillStyle = "#d2b24f";
+      ctx.fillRect(wall.x + 1, wall.y + 1, Math.max(0, wall.w - 2), Math.max(0, wall.h - 2));
+    }
+  }
+
+  function drawTank(tank) {
+    if (!tank.alive) {
+      return;
+    }
+    ctx.save();
+    ctx.translate(tank.x, tank.y);
+    ctx.rotate(tank.angle);
+
+    ctx.fillStyle = tank.color;
+    ctx.fillRect(-tank.r, -tank.r, tank.r * 2, tank.r * 2);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(-5, -5, 10, 10);
+
+    ctx.fillStyle = "#0d1730";
+    ctx.fillRect(0, -3, tank.r + 12, 6);
+
+    ctx.restore();
+  }
+
+  function drawBullets() {
+    for (const bullet of state.bullets) {
+      ctx.fillStyle = bullet.ownerId === 1 ? "#6ec3ff" : "#ff8b8b";
+      ctx.beginPath();
+      ctx.arc(bullet.x, bullet.y, bullet.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawParticles() {
+    for (const p of state.particles) {
+      const alpha = clamp(p.life / p.maxLife, 0, 1);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawHpBars() {
+    for (const tank of state.tanks) {
+      if (!tank.alive) {
+        continue;
+      }
+      const width = 36;
+      const hpPct = clamp(tank.hp / 100, 0, 1);
+      const x = tank.x - width / 2;
+      const y = tank.y - tank.r - 14;
+      ctx.fillStyle = "#0f172e";
+      ctx.fillRect(x, y, width, 5);
+      ctx.fillStyle = tank.id === 1 ? "#6ec3ff" : "#ff8b8b";
+      ctx.fillRect(x, y, width * hpPct, 5);
+    }
+  }
+
+  function render() {
+    drawBackground();
+    drawWalls();
+    drawBullets();
+    drawParticles();
+    drawTank(state.tanks[0]);
+    drawTank(state.tanks[1]);
+    drawHpBars();
+  }
+
+  let previousTime = performance.now();
+  let accumulator = 0;
+
+  function frame(now) {
+    const delta = Math.min(MAX_FRAME, (now - previousTime) / 1000);
+    previousTime = now;
+    accumulator += delta;
+
+    while (accumulator >= FIXED_STEP) {
+      update(FIXED_STEP);
+      accumulator -= FIXED_STEP;
+    }
+
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  function startFromSetup() {
+    const rawName = playerNameInput.value.trim();
+    state.player1Name = rawName || "Player 1";
+    state.mode = modeSelect.value;
+    state.aiDifficulty = difficultySelect.value;
+    state.player2Name = state.mode === "2p" ? "Player 2" : "AI";
+    controlsText.textContent =
+      state.mode === "2p"
+        ? "P1: WASD + Left Click/F. P2: Arrow Keys + L."
+        : `P1: WASD + Left Click/F. Opponent: AI tank (${state.aiDifficulty}).`;
+
+    setupPanel.style.display = "none";
+    beginMatch();
+  }
+
+  function updateDifficultyVisibility() {
+    const hidden = modeSelect.value !== "ai";
+    difficultySelect.hidden = hidden;
+    difficultyLabel.hidden = hidden;
+  }
+
+  function resetForReplay() {
+    state.phase = "idle";
+    state.bullets = [];
+    state.particles = [];
+    state.walls = [];
+    state.tanks = [];
+    setupPanel.style.display = "grid";
+    showOverlay("Maze Warface", "Enter your name and start the match.");
+    updateHud();
+  }
+
+  startBtn.addEventListener("click", startFromSetup);
+  overlayBtn.addEventListener("click", resetForReplay);
+  modeSelect.addEventListener("change", updateDifficultyVisibility);
+
+  document.addEventListener("keydown", (event) => {
+    state.keys[event.code] = true;
   });
-  document.addEventListener("keyup", (e) => {
-    state.keys[e.code] = false;
+  document.addEventListener("keyup", (event) => {
+    state.keys[event.code] = false;
   });
 
-  canvas.addEventListener("mousemove", (e) => {
+  canvas.addEventListener("mousemove", (event) => {
     const rect = canvas.getBoundingClientRect();
-    state.mouse.x = ((e.clientX - rect.left) / rect.width) * canvas.width;
-    state.mouse.y = ((e.clientY - rect.top) / rect.height) * canvas.height;
+    state.mouse.x = ((event.clientX - rect.left) / rect.width) * canvas.width;
+    state.mouse.y = ((event.clientY - rect.top) / rect.height) * canvas.height;
   });
   canvas.addEventListener("mousedown", () => {
     state.mouse.down = true;
@@ -440,6 +698,8 @@
     state.mouse.down = false;
   });
 
-  showOverlay("Maze Warfare", "Clear five random mazes and survive enemy tanks.", "Start Game");
-  requestAnimationFrame(tick);
+  updateHud();
+  updateDifficultyVisibility();
+  showOverlay("Maze Warface", "Enter your name and start the match.");
+  requestAnimationFrame(frame);
 })();

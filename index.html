@@ -3,25 +3,51 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Maze Warfare</title>
+    <title>Maze Warface</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="game-shell">
-      <h1>Maze Warfare</h1>
-      <div class="hud">
-        <span id="health">Health: 100</span>
-        <span id="score">Score: 0</span>
-        <span id="level">Level: 1</span>
-        <span id="powerup">Power-up: None</span>
-      </div>
-      <canvas id="game" width="900" height="600" aria-label="Maze Warfare game"></canvas>
-      <section id="overlay" class="overlay visible" aria-live="polite">
-        <h2 id="overlay-title">Maze Warfare</h2>
-        <p id="overlay-text">Top-down tank arcade action in a random maze.</p>
-        <button id="overlay-btn" type="button">Start Game</button>
+      <h1>Maze Warface</h1>
+
+      <section class="setup" id="setup-panel">
+        <label for="player-name">Player 1 Name</label>
+        <input id="player-name" type="text" maxlength="16" placeholder="Player 1" value="Player 1" />
+
+        <label for="mode-select">Mode</label>
+        <select id="mode-select">
+          <option value="ai">1 Player vs AI</option>
+          <option value="2p">2 Players Local</option>
+        </select>
+
+        <label for="difficulty-select" id="difficulty-label">AI Difficulty</label>
+        <select id="difficulty-select">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+
+        <button id="start-btn" type="button">Start Match</button>
       </section>
-      <p class="controls">Controls: WASD move • Mouse aim • Left click shoot</p>
+
+      <section class="hud">
+        <div id="scoreboard">Player 1: 0 | Player 2: 0</div>
+        <div id="round-label">Round: 1</div>
+        <div id="status-label">Status: Waiting to start</div>
+      </section>
+
+      <div class="arena-wrap">
+        <canvas id="game" width="960" height="640" aria-label="Maze Warface game canvas"></canvas>
+        <section id="overlay" class="overlay visible" aria-live="polite">
+          <h2 id="overlay-title">Maze Warface</h2>
+          <p id="overlay-text">Enter your name and start the match.</p>
+          <button id="overlay-btn" type="button" hidden>Play Again</button>
+        </section>
+      </div>
+
+      <p class="controls" id="controls-text">
+        P1: Move with WASD, shoot with Left Click or F. P2: Move with Arrow Keys, shoot with L.
+      </p>
     </main>
     <script src="./game.js"></script>
   </body>
