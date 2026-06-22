@@ -19,10 +19,24 @@
   const statusEl = document.getElementById("status-label");
   const controlsText = document.getElementById("controls-text");
 
-  const CELL = 40;
+  const CELL = 52;
   const COLS = Math.floor(canvas.width / CELL);
   const ROWS = Math.floor(canvas.height / CELL);
-  const WALL = 6;
+  const WALL = 5;
+  const MAZE_EXTRA_OPENINGS = 0.38;
+  const BASE_TANK_SPEED = 128;
+  const BULLET_SPEED = 285;
+  const POWERUP_TYPES = [
+    "double_damage",
+    "extra_hp",
+    "rapid_fire",
+    "sniper_rounds",
+    "bouncy_rounds",
+    "big_rounds",
+  ];
+  const POWERUPS_PER_ROUND = 4;
+  const POWERUP_MIN_SPAWN_DELAY = 2.5;
+  const POWERUP_MAX_SPAWN_DELAY = 7;
 
   const FIXED_STEP = 1 / 30;
   const MAX_FRAME = 0.1;
@@ -41,10 +55,14 @@
     tanks: [],
     bullets: [],
     particles: [],
+    powerups: [],
+    pendingPowerups: 0,
+    nextPowerupIn: 0,
     keys: {},
     prevKeys: {},
     mouse: { x: canvas.width * 0.5, y: canvas.height * 0.5, down: false },
     betweenRoundsTimer: 0,
+    countdownReason: "",
     roundWinnerId: 0,
     aiTarget: { x: 0, y: 0, timer: 0 },
   };
@@ -82,13 +100,22 @@
       id,
       x,
       y,
-      r: 15,
-      speed: 145,
+      r: 13,
+      speed: BASE_TANK_SPEED,
       angle: 0,
+      maxHp: 100,
       hp: 100,
       reload: 0,
       color,
       alive: true,
+      damageMult: 1,
+      powerTimers: {
+        doubleDamage: 0,
+        rapidFire: 0,
+        sniperRounds: 0,
+        bouncyRounds: 0,
+        bigRounds: 0,
+      },
       lastMoveX: id === 1 ? 1 : -1,
       lastMoveY: 0,
     };
@@ -123,6 +150,37 @@
       retargetMax: 1.2,
       aimJitter: 0.1,
     };
+  }
+
+  function powerupColor(type) {
+    if (type === "double_damage") return "#ff6f3c";
+    if (type === "extra_hp") return "#4dff88";
+    if (type === "sniper_rounds") return "#ffd95c";
+    if (type === "bouncy_rounds") return "#d08fff";
+    if (type === "big_rounds") return "#ff8bc4";
+    return "#4dd1ff";
+  }
+
+  function powerupLabel(type) {
+    if (type === "double_damage") return "2X";
+    if (type === "extra_hp") return "HP";
+    if (type === "sniper_rounds") return "SNP";
+    if (type === "bouncy_rounds") return "BOU";
+    if (type === "big_rounds") return "BIG";
+    return "RF";
+  }
+
+  function getBulletType(tank) {
+    if (tank.powerTimers.sniperRounds > 0) return "sniper";
+    if (tank.powerTimers.bouncyRounds > 0) return "bouncy";
+    if (tank.powerTimers.bigRounds > 0) return "big";
+    return "normal";
+  }
+
+  function clearBulletTypeTimers(tank) {
+    tank.powerTimers.sniperRounds = 0;
+    tank.powerTimers.bouncyRounds = 0;
+    tank.powerTimers.bigRounds = 0;
   }
 
   function generateMazeWalls() {
@@ -168,7 +226,21 @@
         if (cell.walls[3]) walls.push({ x: px, y: py, w: WALL, h: CELL });
       }
     }
-    return walls;
+
+    // Simplify the maze by removing a portion of interior walls.
+    const interiorWalls = walls.filter(
+      (wall) => wall.x > 0 && wall.y > 0 && wall.x + wall.w < canvas.width && wall.y + wall.h < canvas.height
+    );
+    const removeCount = Math.floor(interiorWalls.length * MAZE_EXTRA_OPENINGS);
+    for (let i = interiorWalls.length - 1; i > 0; i -= 1) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const tmp = interiorWalls[i];
+      interiorWalls[i] = interiorWalls[j];
+      interiorWalls[j] = tmp;
+    }
+
+    const removedWalls = new Set(interiorWalls.slice(0, removeCount));
+    return walls.filter((wall) => !removedWalls.has(wall));
   }
 
   function isSpawnValid(x, y, radius = 15) {
@@ -179,18 +251,130 @@
   }
 
   function randomSpawn(awayFrom) {
+    const minDistance = Math.min(canvas.width, canvas.height) * 0.42;
     for (let i = 0; i < 900; i += 1) {
       const x = rand(26, canvas.width - 26);
       const y = rand(26, canvas.height - 26);
       if (!isSpawnValid(x, y)) {
         continue;
       }
-      if (awayFrom && Math.hypot(x - awayFrom.x, y - awayFrom.y) < 280) {
+      if (awayFrom && Math.hypot(x - awayFrom.x, y - awayFrom.y) < minDistance) {
         continue;
       }
       return { x, y };
     }
     return awayFrom ? { x: canvas.width - 80, y: canvas.height - 80 } : { x: 80, y: 80 };
+  }
+
+  function randomPowerupPoint() {
+    for (let i = 0; i < 700; i += 1) {
+      const x = rand(24, canvas.width - 24);
+      const y = rand(24, canvas.height - 24);
+      if (!isSpawnValid(x, y, 10)) {
+        continue;
+      }
+      if (state.tanks.some((tank) => Math.hypot(tank.x - x, tank.y - y) < 70)) {
+        continue;
+      }
+      if (state.powerups.some((p) => Math.hypot(p.x - x, p.y - y) < 46)) {
+        continue;
+      }
+      return { x, y };
+    }
+    return null;
+  }
+
+  function scheduleRoundPowerups() {
+    state.pendingPowerups = POWERUPS_PER_ROUND;
+    state.nextPowerupIn = rand(POWERUP_MIN_SPAWN_DELAY, POWERUP_MAX_SPAWN_DELAY);
+  }
+
+  function spawnOnePowerup() {
+    const pos = randomPowerupPoint();
+    if (!pos) {
+      return false;
+    }
+    const type = POWERUP_TYPES[(Math.random() * POWERUP_TYPES.length) | 0];
+    state.powerups.push({ x: pos.x, y: pos.y, r: 10, type });
+    return true;
+  }
+
+  function updatePowerupSpawning(dt) {
+    if (state.phase !== "playing" || state.pendingPowerups <= 0) {
+      return;
+    }
+
+    state.nextPowerupIn -= dt;
+    if (state.nextPowerupIn > 0) {
+      return;
+    }
+
+    spawnOnePowerup();
+    state.pendingPowerups -= 1;
+    if (state.pendingPowerups > 0) {
+      state.nextPowerupIn = rand(POWERUP_MIN_SPAWN_DELAY, POWERUP_MAX_SPAWN_DELAY);
+    }
+  }
+
+  function applyPowerup(tank, type) {
+    if (type === "double_damage") {
+      tank.damageMult = 2;
+      tank.powerTimers.doubleDamage = 10;
+      return;
+    }
+    if (type === "rapid_fire") {
+      tank.powerTimers.rapidFire = 8;
+      return;
+    }
+
+    if (type === "sniper_rounds") {
+      clearBulletTypeTimers(tank);
+      tank.powerTimers.sniperRounds = 10;
+      return;
+    }
+
+    if (type === "bouncy_rounds") {
+      clearBulletTypeTimers(tank);
+      tank.powerTimers.bouncyRounds = 10;
+      return;
+    }
+
+    if (type === "big_rounds") {
+      clearBulletTypeTimers(tank);
+      tank.powerTimers.bigRounds = 10;
+      return;
+    }
+
+    tank.maxHp = Math.max(tank.maxHp, 150);
+    tank.hp = Math.min(tank.maxHp, tank.hp + 50);
+  }
+
+  function updatePowerups(dt) {
+    for (const tank of state.tanks) {
+      if (!tank.alive) {
+        continue;
+      }
+
+      tank.powerTimers.doubleDamage = Math.max(0, tank.powerTimers.doubleDamage - dt);
+      tank.powerTimers.rapidFire = Math.max(0, tank.powerTimers.rapidFire - dt);
+      tank.powerTimers.sniperRounds = Math.max(0, tank.powerTimers.sniperRounds - dt);
+      tank.powerTimers.bouncyRounds = Math.max(0, tank.powerTimers.bouncyRounds - dt);
+      tank.powerTimers.bigRounds = Math.max(0, tank.powerTimers.bigRounds - dt);
+      tank.damageMult = tank.powerTimers.doubleDamage > 0 ? 2 : 1;
+    }
+
+    state.powerups = state.powerups.filter((powerup) => {
+      for (const tank of state.tanks) {
+        if (!tank.alive) {
+          continue;
+        }
+        if (Math.hypot(tank.x - powerup.x, tank.y - powerup.y) <= tank.r + powerup.r) {
+          applyPowerup(tank, powerup.type);
+          return false;
+        }
+      }
+      return true;
+    });
   }
 
   function newRoundArena() {
@@ -200,7 +384,9 @@
     state.tanks = [spawnTank(1, spawn1.x, spawn1.y, "#2f7cff"), spawnTank(2, spawn2.x, spawn2.y, "#ff4343")];
     state.bullets = [];
     state.particles = [];
+    state.powerups = [];
     state.aiTarget = { x: spawn1.x, y: spawn1.y, timer: 0 };
+    scheduleRoundPowerups();
   }
 
   function showOverlay(title, text, buttonVisible = false, buttonText = "Play Again") {
@@ -235,6 +421,7 @@
   function startCountdown(seconds, withRoundMessage) {
     state.phase = "countdown";
     state.betweenRoundsTimer = seconds;
+    state.countdownReason = withRoundMessage ? "next-round" : "round-start";
     if (withRoundMessage) {
       const winnerName = state.roundWinnerId === 1 ? state.player1Name : state.player2Name;
       showOverlay(
@@ -280,23 +467,67 @@
     }
   }
 
+  function resolveTankCollisions() {
+    if (state.tanks.length < 2) {
+      return;
+    }
+
+    const a = state.tanks[0];
+    const b = state.tanks[1];
+    if (!a || !b || !a.alive || !b.alive) {
+      return;
+    }
+
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const distance = Math.hypot(dx, dy);
+    const minDistance = a.r + b.r + 2;
+    if (distance >= minDistance) {
+      return;
+    }
+
+    const nx = distance > 0 ? dx / distance : 1;
+    const ny = distance > 0 ? dy / distance : 0;
+    const push = (minDistance - distance) * 0.5;
+
+    const nextAx = a.x - nx * push;
+    const nextAy = a.y - ny * push;
+    const nextBx = b.x + nx * push;
+    const nextBy = b.y + ny * push;
+
+    if (!state.walls.some((wall) => intersectsRectCircle(wall, nextAx, nextAy, a.r))) {
+      a.x = clamp(nextAx, a.r, canvas.width - a.r);
+      a.y = clamp(nextAy, a.r, canvas.height - a.r);
+    }
+    if (!state.walls.some((wall) => intersectsRectCircle(wall, nextBx, nextBy, b.r))) {
+      b.x = clamp(nextBx, b.r, canvas.width - b.r);
+      b.y = clamp(nextBy, b.r, canvas.height - b.r);
+    }
+  }
+
   function shootBullet(tank, angle, cooldown = 0.32) {
     if (!tank.alive || tank.reload > 0) {
       return;
     }
     const muzzle = tank.r + 9;
-    const speed = 285;
+    const bulletType = getBulletType(tank);
+    const speed =
+      bulletType === "sniper" ? BULLET_SPEED * 1.55 : bulletType === "bouncy" ? BULLET_SPEED * 0.92 : BULLET_SPEED;
+    const radius = bulletType === "big" ? 6 : 4;
+    const life = bulletType === "sniper" ? 2.6 : bulletType === "bouncy" ? 2.9 : bulletType === "big" ? 2.5 : 2.2;
+    const bounces = bulletType === "bouncy" ? 3 : 1;
     state.bullets.push({
       ownerId: tank.id,
       x: tank.x + Math.cos(angle) * muzzle,
       y: tank.y + Math.sin(angle) * muzzle,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      r: 4,
-      life: 2.2,
-      bounces: 1,
+      r: radius,
+      life,
+      type: bulletType,
+      bounces,
     });
-    tank.reload = cooldown;
+    tank.reload = tank.powerTimers.rapidFire > 0 ? Math.min(cooldown, 0.16) : cooldown;
   }
 
   function isPressed(code) {
@@ -348,8 +579,11 @@
   function updatePlayerTwoAI(dt) {
     const p1 = state.tanks[0];
     const ai = state.tanks[1];
+    if (!p1 || !p1.alive || !ai || !ai.alive) {
+      return;
+    }
     const aiProfile = getAiProfile();
-    ai.speed = 145 * aiProfile.speedMult;
+    ai.speed = BASE_TANK_SPEED * aiProfile.speedMult;
     const sees = lineOfSight(ai, p1);
 
     state.aiTarget.timer -= dt;
@@ -378,48 +612,63 @@
   function updateBullets(dt) {
     for (const bullet of state.bullets) {
       bullet.life -= dt;
-      bullet.x += bullet.vx * dt;
-      bullet.y += bullet.vy * dt;
+      const totalMove = Math.hypot(bullet.vx * dt, bullet.vy * dt);
+      const steps = Math.max(1, Math.ceil(totalMove / (bullet.r * 0.75)));
+      const stepDt = dt / steps;
 
-      if (bullet.x < bullet.r || bullet.x > canvas.width - bullet.r) {
-        bullet.vx *= -1;
-        bullet.bounces -= 1;
-        bullet.x = clamp(bullet.x, bullet.r, canvas.width - bullet.r);
-      }
-      if (bullet.y < bullet.r || bullet.y > canvas.height - bullet.r) {
-        bullet.vy *= -1;
-        bullet.bounces -= 1;
-        bullet.y = clamp(bullet.y, bullet.r, canvas.height - bullet.r);
-      }
+      for (let step = 0; step < steps; step += 1) {
+        bullet.x += bullet.vx * stepDt;
+        bullet.y += bullet.vy * stepDt;
 
-      for (const wall of state.walls) {
-        if (!intersectsRectCircle(wall, bullet.x, bullet.y, bullet.r)) {
-          continue;
-        }
-        const centerX = wall.x + wall.w * 0.5;
-        const centerY = wall.y + wall.h * 0.5;
-        const dx = bullet.x - centerX;
-        const dy = bullet.y - centerY;
-        if (Math.abs(dx / wall.w) > Math.abs(dy / wall.h)) {
+        if (bullet.x < bullet.r || bullet.x > canvas.width - bullet.r) {
           bullet.vx *= -1;
-        } else {
+          bullet.bounces -= 1;
+          bullet.x = clamp(bullet.x, bullet.r, canvas.width - bullet.r);
+        }
+        if (bullet.y < bullet.r || bullet.y > canvas.height - bullet.r) {
           bullet.vy *= -1;
+          bullet.bounces -= 1;
+          bullet.y = clamp(bullet.y, bullet.r, canvas.height - bullet.r);
         }
-        bullet.bounces -= 1;
-        break;
-      }
 
-      for (const tank of state.tanks) {
-        if (!tank.alive || tank.id === bullet.ownerId) {
-          continue;
-        }
-        if (Math.hypot(tank.x - bullet.x, tank.y - bullet.y) <= tank.r + bullet.r) {
-          tank.hp -= 50;
-          bullet.life = 0;
-          if (tank.hp <= 0) {
-            tank.alive = false;
-            spawnExplosion(tank.x, tank.y, tank.color);
+        for (const wall of state.walls) {
+          if (!intersectsRectCircle(wall, bullet.x, bullet.y, bullet.r)) {
+            continue;
           }
+          const centerX = wall.x + wall.w * 0.5;
+          const centerY = wall.y + wall.h * 0.5;
+          const dx = bullet.x - centerX;
+          const dy = bullet.y - centerY;
+          if (Math.abs(dx / wall.w) > Math.abs(dy / wall.h)) {
+            bullet.vx *= -1;
+          } else {
+            bullet.vy *= -1;
+          }
+          bullet.bounces -= 1;
+          break;
+        }
+
+        let hitTank = false;
+        for (const tank of state.tanks) {
+          if (!tank.alive || tank.id === bullet.ownerId) {
+            continue;
+          }
+          if (Math.hypot(tank.x - bullet.x, tank.y - bullet.y) <= tank.r + bullet.r) {
+            const shooter = state.tanks.find((t) => t.id === bullet.ownerId);
+            const bulletBonus = bullet.type === "big" ? 1.2 : bullet.type === "sniper" ? 1.1 : 1;
+            const damage = 25 * (shooter ? shooter.damageMult : 1) * bulletBonus;
+            tank.hp -= damage;
+            bullet.life = 0;
+            hitTank = true;
+            if (tank.hp <= 0) {
+              tank.alive = false;
+              spawnExplosion(tank.x, tank.y, tank.color);
+            }
+            break;
+          }
+        }
+
+        if (hitTank || bullet.life <= 0 || bullet.bounces < 0) {
           break;
         }
       }
@@ -483,9 +732,15 @@
     if (state.phase === "countdown") {
       state.betweenRoundsTimer -= dt;
       const seconds = Math.max(0, Math.ceil(state.betweenRoundsTimer));
-      overlayText.textContent = overlayText.textContent.replace(/\d+\.\.\.$/, `${seconds}...`);
+      if (state.countdownReason === "next-round") {
+        const winnerName = state.roundWinnerId === 1 ? state.player1Name : state.player2Name;
+        overlayText.textContent = `${winnerName} scored this round. Next round starts in ${seconds}...`;
+      } else {
+        overlayText.textContent = `Round ${state.round} starts in ${seconds}...`;
+      }
       if (state.betweenRoundsTimer <= 0) {
         state.phase = "playing";
+        state.countdownReason = "";
         hideOverlay();
       }
       return;
@@ -517,6 +772,10 @@
       } else {
         updatePlayerTwoAI(dt);
       }
+
+      resolveTankCollisions();
+      updatePowerupSpawning(dt);
+      updatePowerups(dt);
       updateBullets(dt);
     }
 
@@ -560,7 +819,7 @@
   }
 
   function drawTank(tank) {
-    if (!tank.alive) {
+    if (!tank || !tank.alive) {
       return;
     }
     ctx.save();
@@ -581,10 +840,33 @@
 
   function drawBullets() {
     for (const bullet of state.bullets) {
-      ctx.fillStyle = bullet.ownerId === 1 ? "#6ec3ff" : "#ff8b8b";
+      if (bullet.type === "sniper") {
+        ctx.fillStyle = "#ffe98a";
+      } else if (bullet.type === "bouncy") {
+        ctx.fillStyle = "#dba7ff";
+      } else if (bullet.type === "big") {
+        ctx.fillStyle = "#ff9acc";
+      } else {
+        ctx.fillStyle = bullet.ownerId === 1 ? "#6ec3ff" : "#ff8b8b";
+      }
       ctx.beginPath();
       ctx.arc(bullet.x, bullet.y, bullet.r, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  function drawPowerups() {
+    for (const powerup of state.powerups) {
+      ctx.fillStyle = powerupColor(powerup.type);
+      ctx.beginPath();
+      ctx.arc(powerup.x, powerup.y, powerup.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#0d1730";
+      ctx.font = "bold 10px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(powerupLabel(powerup.type), powerup.x, powerup.y + 0.5);
     }
   }
 
@@ -606,19 +888,41 @@
         continue;
       }
       const width = 36;
-      const hpPct = clamp(tank.hp / 100, 0, 1);
+      const hpPct = clamp(tank.hp / tank.maxHp, 0, 1);
       const x = tank.x - width / 2;
       const y = tank.y - tank.r - 14;
       ctx.fillStyle = "#0f172e";
       ctx.fillRect(x, y, width, 5);
       ctx.fillStyle = tank.id === 1 ? "#6ec3ff" : "#ff8b8b";
       ctx.fillRect(x, y, width * hpPct, 5);
+
+      if (
+        tank.powerTimers.doubleDamage > 0 ||
+        tank.powerTimers.rapidFire > 0 ||
+        tank.powerTimers.sniperRounds > 0 ||
+        tank.powerTimers.bouncyRounds > 0 ||
+        tank.powerTimers.bigRounds > 0
+      ) {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 9px Trebuchet MS";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        const tags = [];
+        if (tank.powerTimers.doubleDamage > 0) tags.push("2X");
+        if (tank.powerTimers.rapidFire > 0) tags.push("RF");
+        if (tank.powerTimers.sniperRounds > 0) tags.push("SNP");
+        if (tank.powerTimers.bouncyRounds > 0) tags.push("BOU");
+        if (tank.powerTimers.bigRounds > 0) tags.push("BIG");
+        const tag = tags.join("+");
+        ctx.fillText(tag, tank.x, y - 2);
+      }
     }
   }
 
   function render() {
     drawBackground();
     drawWalls();
+    drawPowerups();
     drawBullets();
     drawParticles();
     drawTank(state.tanks[0]);
