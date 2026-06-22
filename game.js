@@ -14,6 +14,8 @@
   const mazeRows = 12;
   const cellSize = 50;
   const maxLevel = 5;
+  const powerupSpawnChance = 0.65;
+  const maxDeltaTime = 0.033;
 
   const state = {
     running: false,
@@ -144,7 +146,7 @@
       return e;
     });
 
-    if (Math.random() > 0.35) {
+    if (Math.random() < powerupSpawnChance) {
       const pu = randomSpawn();
       const types = ["rapid fire", "shield", "speed boost"];
       state.powerups.push({ ...pu, r: 10, type: types[(Math.random() * types.length) | 0] });
@@ -394,7 +396,7 @@
 
   let last = performance.now();
   function tick(now) {
-    const dt = Math.min(0.033, (now - last) / 1000);
+    const dt = Math.min(maxDeltaTime, (now - last) / 1000);
     last = now;
 
     if (state.running) {
