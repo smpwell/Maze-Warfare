@@ -8,29 +8,99 @@
   </head>
   <body>
     <main class="game-shell">
-      <h1>Maze Warface</h1>
+      <div class="menu-screen" id="menu-screen">
+        <div class="menu-container">
+          <div class="menu-hero">
+            <p class="menu-kicker">Copilot-inspired arcade menu</p>
+            <h1 class="menu-title">
+              <span class="menu-title-top">Maze</span>
+              <span class="menu-title-bottom">Warface</span>
+            </h1>
+          </div>
 
-      <section class="setup" id="setup-panel">
-        <label for="player-name">Player 1 Name</label>
-        <input id="player-name" type="text" maxlength="16" placeholder="Player 1" value="Player 1" />
+          <div class="menu-grid">
+            <section class="menu-panel menu-panel-inputs" id="menu-form">
+              <div class="form-group">
+                <label for="player-name">Player Name</label>
+                <input id="player-name" type="text" maxlength="16" placeholder="Enter your name" value="Player 1" />
+              </div>
 
-        <label for="mode-select">Mode</label>
-        <select id="mode-select">
-          <option value="ai">1 Player vs AI</option>
-          <option value="2p">2 Players Local</option>
-        </select>
+              <div class="form-group">
+                <label for="difficulty-select">AI Difficulty</label>
+                <select id="difficulty-select">
+                  <option value="easy">Easy</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </div>
+            </section>
 
-        <label for="difficulty-select" id="difficulty-label">AI Difficulty</label>
-        <select id="difficulty-select">
-          <option value="easy">Easy</option>
-          <option value="medium" selected>Medium</option>
-          <option value="hard">Hard</option>
-        </select>
+            <section class="menu-panel menu-panel-mode">
+              <div class="menu-panel-heading">Game Mode</div>
+              <div class="menu-actions-large menu-actions-inline">
+                <button id="menu-ai-btn" type="button" class="menu-btn-large menu-btn-ai">Player vs AI</button>
+                <button id="menu-2p-btn" type="button" class="menu-btn-large menu-btn-2p">Player vs Player</button>
+                <button id="menu-controls-btn" type="button" class="menu-btn-large menu-btn-powers">Powers</button>
+              </div>
+            </section>
 
-        <button id="start-btn" type="button">Start Match</button>
-      </section>
+            <section class="menu-panel menu-panel-powers">
+              <div class="menu-panel-heading">Power-ups</div>
+              <div class="menu-powers" id="menu-controls" hidden>
+                <div class="power-card power-double">
+                  <div class="power-badge">2X</div>
+                  <div>
+                    <strong>2X Damage</strong>
+                    <p>Double your bullet damage for 5 seconds.</p>
+                  </div>
+                </div>
+                <div class="power-card power-heal">
+                  <div class="power-badge">HP</div>
+                  <div>
+                    <strong>HP Heal</strong>
+                    <p>Restore 50% of your max health.</p>
+                  </div>
+                </div>
+                <div class="power-card power-rapid">
+                  <div class="power-badge">RF</div>
+                  <div>
+                    <strong>Rapid Fire</strong>
+                    <p>Shoot twice as fast for 8 seconds.</p>
+                  </div>
+                </div>
+                <div class="power-card power-sniper">
+                  <div class="power-badge">SNP</div>
+                  <div>
+                    <strong>Sniper Rounds</strong>
+                    <p>Faster, stronger bullets for 5 seconds.</p>
+                  </div>
+                </div>
+                <div class="power-card power-bouncy">
+                  <div class="power-badge">BOU</div>
+                  <div>
+                    <strong>Bouncy Rounds</strong>
+                    <p>Bullets bounce 5 times instead of 3.</p>
+                  </div>
+                </div>
+                <div class="power-card power-big">
+                  <div class="power-badge">BIG</div>
+                  <div>
+                    <strong>Big Rounds</strong>
+                    <p>Larger, stronger bullets for 10 seconds.</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
 
-      <section class="hud">
+        <p class="menu-footer">
+          <strong>P1:</strong> Move with WASD, shoot with Left Click or F.
+          <strong>P2:</strong> Move with Arrow Keys, shoot with L.
+        </p>
+      </div>
+
+      <section class="hud" id="hud">
         <div id="scoreboard">Player 1: 0 | Player 2: 0</div>
         <div id="round-label">Round: 1</div>
         <div id="status-label">Status: Waiting to start</div>
@@ -41,11 +111,22 @@
       </section>
 
       <div class="arena-wrap">
-        <canvas id="game" width="700" height="440" aria-label="Maze Warface game canvas"></canvas>
+        <canvas id="game" width="700" height="390" aria-label="Maze Warface game canvas"></canvas>
         <section id="overlay" class="overlay visible" aria-live="polite">
           <h2 id="overlay-title">Maze Warface</h2>
-          <p id="overlay-text">Enter your name and start the match.</p>
-          <button id="overlay-btn" type="button" hidden>Play Again</button>
+          <p id="overlay-text">Choose a mode from the menu to start.</p>
+          <div class="overlay-ai-difficulty" id="overlay-ai-difficulty-wrap" hidden>
+            <label for="overlay-ai-difficulty">AI Difficulty</label>
+            <select id="overlay-ai-difficulty">
+              <option value="easy">Easy</option>
+              <option value="medium" selected>Medium</option>
+              <option value="hard">Hard</option>
+            </select>
+          </div>
+          <div class="overlay-actions">
+            <button id="overlay-btn" type="button" hidden>Play Again</button>
+            <button id="menu-btn" type="button" hidden>Go Back to Menu</button>
+          </div>
         </section>
       </div>
 

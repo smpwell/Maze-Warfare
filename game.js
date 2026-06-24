@@ -2,24 +2,30 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
-  const setupPanel = document.getElementById("setup-panel");
-  const startBtn = document.getElementById("start-btn");
+  const menuScreen = document.getElementById("menu-screen");
+  const menuAiBtn = document.getElementById("menu-ai-btn");
+  const menu2pBtn = document.getElementById("menu-2p-btn");
+  const menuControlsBtn = document.getElementById("menu-controls-btn");
+  const menuControls = document.getElementById("menu-controls");
   const fullscreenBtn = document.getElementById("fullscreen-btn");
-  const modeSelect = document.getElementById("mode-select");
   const difficultySelect = document.getElementById("difficulty-select");
-  const difficultyLabel = document.getElementById("difficulty-label");
   const playerNameInput = document.getElementById("player-name");
 
   const overlay = document.getElementById("overlay");
   const overlayTitle = document.getElementById("overlay-title");
   const overlayText = document.getElementById("overlay-text");
   const overlayBtn = document.getElementById("overlay-btn");
+  const menuBtn = document.getElementById("menu-btn");
+  const overlayAiDifficultyWrap = document.getElementById("overlay-ai-difficulty-wrap");
+  const overlayAiDifficulty = document.getElementById("overlay-ai-difficulty");
 
   const scoreboardEl = document.getElementById("scoreboard");
   const roundEl = document.getElementById("round-label");
   const statusEl = document.getElementById("status-label");
   const controlsText = document.getElementById("controls-text");
   const arenaWrap = document.querySelector(".arena-wrap");
+  const hud = document.getElementById("hud");
+  const actions = document.querySelector(".actions");
 
   const CELL = 52;
   const COLS = Math.floor(canvas.width / CELL);
@@ -77,6 +83,17 @@
     return Math.max(min, Math.min(max, v));
   }
 
+  function wrapAngle(angle) {
+    while (angle <= -Math.PI) angle += Math.PI * 2;
+    while (angle > Math.PI) angle -= Math.PI * 2;
+    return angle;
+  }
+
+  function approachAngle(current, target, maxDelta) {
+    const delta = clamp(wrapAngle(target - current), -maxDelta, maxDelta);
+    return current + delta;
+  }
+
   function intersectsRectCircle(rect, x, y, r) {
     const nx = clamp(x, rect.x, rect.x + rect.w);
     const ny = clamp(y, rect.y, rect.y + rect.h);
@@ -119,6 +136,20 @@
         bouncyRounds: 0,
         bigRounds: 0,
       },
+      lastHp: 100,
+      aiMode: "rush",
+      aiModeTimer: 0,
+      aiSteerX: 0,
+      aiSteerY: 0,
+      aiNoiseX: 0,
+      aiNoiseY: 0,
+      aiNoiseTimer: 0,
+      aiStrafeDir: Math.random() < 0.5 ? -1 : 1,
+      aiStrafeTimer: rand(0.45, 1.1),
+      aiHesitateTimer: 0,
+      aiAimAngle: 0,
+      aiBurstShotsLeft: 0,
+      aiBurstPause: 0,
       lastMoveX: id === 1 ? 1 : -1,
       lastMoveY: 0,
     };
@@ -127,31 +158,55 @@
   function getAiProfile() {
     if (state.aiDifficulty === "easy") {
       return {
-        speedMult: 0.82,
+        speedMult: 1,
         reload: 0.6,
         shotRange: 320,
-        retargetMin: 1.2,
-        retargetMax: 1.8,
+        retargetMin: 0.8,
+        retargetMax: 1.2,
         aimJitter: 0.2,
+        aimTurnSpeed: 2.4,
+        moveNoise: 0.5,
+        hesitationPerSec: 0.95,
+        strafeWeight: 0.36,
+        burstMin: 1,
+        burstMax: 2,
+        burstPauseMin: 0.22,
+        burstPauseMax: 0.48,
       };
     }
     if (state.aiDifficulty === "hard") {
       return {
-        speedMult: 1.2,
+        speedMult: 1,
         reload: 0.2,
-        shotRange: 560,
-        retargetMin: 0.45,
-        retargetMax: 0.8,
+        shotRange: 600,
+        retargetMin: 0.28,
+        retargetMax: 0.52,
         aimJitter: 0.04,
+        aimTurnSpeed: 6.3,
+        moveNoise: 0.16,
+        hesitationPerSec: 0.18,
+        strafeWeight: 0.62,
+        burstMin: 2,
+        burstMax: 4,
+        burstPauseMin: 0.05,
+        burstPauseMax: 0.18,
       };
     }
     return {
       speedMult: 1,
       reload: 0.32,
-      shotRange: 460,
-      retargetMin: 0.8,
-      retargetMax: 1.2,
+      shotRange: 500,
+      retargetMin: 0.5,
+      retargetMax: 0.85,
       aimJitter: 0.1,
+      aimTurnSpeed: 4,
+      moveNoise: 0.28,
+      hesitationPerSec: 0.46,
+      strafeWeight: 0.5,
+      burstMin: 1,
+      burstMax: 3,
+      burstPauseMin: 0.1,
+      burstPauseMax: 0.3,
     };
   }
 
@@ -217,16 +272,27 @@
     }
 
     const walls = [];
+    const wallKeys = new Set();
+
+    function pushWall(x, y, w, h) {
+      const key = `${x}|${y}|${w}|${h}`;
+      if (wallKeys.has(key)) {
+        return;
+      }
+      wallKeys.add(key);
+      walls.push({ x, y, w, h });
+    }
+
     for (let y = 0; y < ROWS; y += 1) {
       for (let x = 0; x < COLS; x += 1) {
         const cell = grid[y][x];
         const px = x * CELL;
         const py = y * CELL;
 
-        if (cell.walls[0]) walls.push({ x: px, y: py, w: CELL, h: WALL });
-        if (cell.walls[1]) walls.push({ x: px + CELL - WALL, y: py, w: WALL, h: CELL });
-        if (cell.walls[2]) walls.push({ x: px, y: py + CELL - WALL, w: CELL, h: WALL });
-        if (cell.walls[3]) walls.push({ x: px, y: py, w: WALL, h: CELL });
+        if (cell.walls[0]) pushWall(px, py, CELL, WALL);
+        if (cell.walls[1]) pushWall(px + CELL - WALL, py, WALL, CELL);
+        if (cell.walls[2]) pushWall(px, py + CELL - WALL, CELL, WALL);
+        if (cell.walls[3]) pushWall(px, py, WALL, CELL);
       }
     }
 
@@ -254,7 +320,7 @@
   }
 
   function randomSpawn(awayFrom) {
-    const minDistance = Math.min(canvas.width, canvas.height) * 0.42;
+    const minDistance = Math.min(canvas.width, canvas.height) * 0.26;
     for (let i = 0; i < 900; i += 1) {
       const x = rand(26, canvas.width - 26);
       const y = rand(26, canvas.height - 26);
@@ -269,14 +335,47 @@
     return awayFrom ? { x: canvas.width - 80, y: canvas.height - 80 } : { x: 80, y: 80 };
   }
 
-  function randomPowerupPoint() {
+  function randomSpawnNear(target, minDistance = 80, maxDistance = 230) {
     for (let i = 0; i < 700; i += 1) {
-      const x = rand(24, canvas.width - 24);
-      const y = rand(24, canvas.height - 24);
-      if (!isSpawnValid(x, y, 10)) {
+      const distance = rand(minDistance, maxDistance);
+      const angle = rand(0, Math.PI * 2);
+      const x = target.x + Math.cos(angle) * distance;
+      const y = target.y + Math.sin(angle) * distance;
+
+      if (x < 20 || y < 20 || x > canvas.width - 20 || y > canvas.height - 20) {
         continue;
       }
-      if (state.tanks.some((tank) => Math.hypot(tank.x - x, tank.y - y) < 70)) {
+      if (!isSpawnValid(x, y)) {
+        continue;
+      }
+      return { x, y };
+    }
+
+    return { x: target.x, y: target.y };
+  }
+
+  function randomPowerupPoint() {
+    // Spawn power-ups near active players
+    if (state.tanks.length === 0) {
+      return null;
+    }
+    
+    for (let i = 0; i < 700; i += 1) {
+      // Pick a random player to spawn near
+      const player = state.tanks[(Math.random() * state.tanks.length) | 0];
+      
+      // Spawn within 120-200 pixels from the player
+      const distance = rand(120, 200);
+      const angle = Math.random() * Math.PI * 2;
+      const x = player.x + Math.cos(angle) * distance;
+      const y = player.y + Math.sin(angle) * distance;
+      
+      // Keep within canvas bounds
+      if (x < 24 || x > canvas.width - 24 || y < 24 || y > canvas.height - 24) {
+        continue;
+      }
+      
+      if (!isSpawnValid(x, y, 10)) {
         continue;
       }
       if (state.powerups.some((p) => Math.hypot(p.x - x, p.y - y) < 46)) {
@@ -322,7 +421,7 @@
   function applyPowerup(tank, type) {
     if (type === "double_damage") {
       tank.damageMult = 2;
-      tank.powerTimers.doubleDamage = 10;
+      tank.powerTimers.doubleDamage = 5;
       return;
     }
     if (type === "rapid_fire") {
@@ -332,7 +431,7 @@
 
     if (type === "sniper_rounds") {
       clearBulletTypeTimers(tank);
-      tank.powerTimers.sniperRounds = 10;
+      tank.powerTimers.sniperRounds = 5;
       return;
     }
 
@@ -349,7 +448,7 @@
     }
 
     tank.maxHp = Math.max(tank.maxHp, 150);
-    tank.hp = Math.min(tank.maxHp, tank.hp + 50);
+    tank.hp = Math.min(tank.maxHp, tank.hp + tank.maxHp * 0.5);
   }
 
   function updatePowerups(dt) {
@@ -397,6 +496,8 @@
     overlayText.textContent = text;
     overlayBtn.textContent = buttonText;
     overlayBtn.hidden = !buttonVisible;
+    menuBtn.hidden = true;
+    overlayAiDifficultyWrap.hidden = true;
     overlay.classList.add("visible");
   }
 
@@ -518,7 +619,7 @@
       bulletType === "sniper" ? BULLET_SPEED * 1.55 : bulletType === "bouncy" ? BULLET_SPEED * 0.92 : BULLET_SPEED;
     const radius = bulletType === "big" ? 6 : 4;
     const life = bulletType === "sniper" ? 2.6 : bulletType === "bouncy" ? 2.9 : bulletType === "big" ? 2.5 : 2.2;
-    const bounces = bulletType === "bouncy" ? 3 : 1;
+    const bounces = bulletType === "bouncy" ? 5 : 3;
     state.bullets.push({
       ownerId: tank.id,
       x: tank.x + Math.cos(angle) * muzzle,
@@ -588,28 +689,130 @@
     const aiProfile = getAiProfile();
     ai.speed = BASE_TANK_SPEED * aiProfile.speedMult;
     const sees = lineOfSight(ai, p1);
+    const distanceToPlayer = Math.hypot(p1.x - ai.x, p1.y - ai.y);
+    const tookDamage = ai.hp < ai.lastHp;
+
+    ai.aiModeTimer -= dt;
+    if (tookDamage || ai.aiModeTimer <= 0) {
+      const lowHp = ai.hp <= ai.maxHp * 0.45;
+      const retreatChance = lowHp ? 0.7 : 0.45;
+      ai.aiMode = Math.random() < retreatChance ? "retreat" : "rush";
+      ai.aiModeTimer = rand(0.9, 1.8);
+    }
 
     state.aiTarget.timer -= dt;
-    if (sees) {
+    if (ai.aiMode === "retreat" && distanceToPlayer < 260) {
+      const awayX = clamp(ai.x + (ai.x - p1.x), 24, canvas.width - 24);
+      const awayY = clamp(ai.y + (ai.y - p1.y), 24, canvas.height - 24);
+      const retreatPoint = randomSpawnNear({ x: awayX, y: awayY }, 30, 150);
+      state.aiTarget.x = retreatPoint.x;
+      state.aiTarget.y = retreatPoint.y;
+      state.aiTarget.timer = 0.18;
+    } else if (sees || ai.aiMode === "rush") {
       state.aiTarget.x = p1.x;
       state.aiTarget.y = p1.y;
-      state.aiTarget.timer = 0.5;
+      state.aiTarget.timer = 0.18;
+    } else if (distanceToPlayer > 120) {
+      state.aiTarget.x = p1.x;
+      state.aiTarget.y = p1.y;
+      state.aiTarget.timer = 0.22;
     } else if (state.aiTarget.timer <= 0 || Math.hypot(ai.x - state.aiTarget.x, ai.y - state.aiTarget.y) < 18) {
-      const next = randomSpawn(p1);
+      const next = randomSpawnNear(p1, 70, 210);
       state.aiTarget.x = next.x;
       state.aiTarget.y = next.y;
-      state.aiTarget.timer = rand(aiProfile.retargetMin, aiProfile.retargetMax);
+      state.aiTarget.timer = rand(aiProfile.retargetMin * 0.55, aiProfile.retargetMax * 0.75);
     }
 
-    const ax = state.aiTarget.x - ai.x;
-    const ay = state.aiTarget.y - ai.y;
-    moveTank(ai, dt, ax, ay);
-    ai.angle = Math.atan2(p1.y - ai.y, p1.x - ai.x);
+    ai.aiStrafeTimer -= dt;
+    if (ai.aiStrafeTimer <= 0) {
+      ai.aiStrafeDir = Math.random() < 0.5 ? -1 : 1;
+      ai.aiStrafeTimer = rand(0.45, 1.15);
+    }
+
+    ai.aiNoiseTimer -= dt;
+    if (ai.aiNoiseTimer <= 0) {
+      const noiseAngle = rand(0, Math.PI * 2);
+      const noiseStrength = rand(0.08, aiProfile.moveNoise);
+      ai.aiNoiseX = Math.cos(noiseAngle) * noiseStrength;
+      ai.aiNoiseY = Math.sin(noiseAngle) * noiseStrength;
+      ai.aiNoiseTimer = rand(0.2, 0.65);
+    }
+
+    if (ai.aiHesitateTimer <= 0 && Math.random() < aiProfile.hesitationPerSec * dt) {
+      ai.aiHesitateTimer = rand(0.05, 0.17);
+    }
+    ai.aiHesitateTimer = Math.max(0, ai.aiHesitateTimer - dt);
+
+    const prevX = ai.x;
+    const prevY = ai.y;
+    const toTargetX = state.aiTarget.x - ai.x;
+    const toTargetY = state.aiTarget.y - ai.y;
+    const toTargetMag = Math.hypot(toTargetX, toTargetY) || 1;
+
+    let desiredMoveX = toTargetX / toTargetMag;
+    let desiredMoveY = toTargetY / toTargetMag;
+
+    if (sees) {
+      const toPlayerX = p1.x - ai.x;
+      const toPlayerY = p1.y - ai.y;
+      const toPlayerMag = Math.hypot(toPlayerX, toPlayerY) || 1;
+      const unitPlayerX = toPlayerX / toPlayerMag;
+      const unitPlayerY = toPlayerY / toPlayerMag;
+      const strafeX = -unitPlayerY * ai.aiStrafeDir;
+      const strafeY = unitPlayerX * ai.aiStrafeDir;
+      const nearFactor = clamp((300 - distanceToPlayer) / 240, 0, 1);
+      const strafeBoost = aiProfile.strafeWeight + nearFactor * 0.18;
+      desiredMoveX += strafeX * strafeBoost;
+      desiredMoveY += strafeY * strafeBoost;
+    }
+
+    desiredMoveX += ai.aiNoiseX;
+    desiredMoveY += ai.aiNoiseY;
+
+    const desiredMag = Math.hypot(desiredMoveX, desiredMoveY) || 1;
+    desiredMoveX /= desiredMag;
+    desiredMoveY /= desiredMag;
+
+    if (ai.aiHesitateTimer > 0) {
+      desiredMoveX *= 0.3;
+      desiredMoveY *= 0.3;
+    }
+
+    const steerBlend = 1 - Math.exp(-5 * dt);
+    ai.aiSteerX += (desiredMoveX - ai.aiSteerX) * steerBlend;
+    ai.aiSteerY += (desiredMoveY - ai.aiSteerY) * steerBlend;
+    moveTank(ai, dt, ai.aiSteerX, ai.aiSteerY);
+
+    if (Math.hypot(ai.x - prevX, ai.y - prevY) < 0.6) {
+      const fallback = randomSpawnNear(p1, 70, 180);
+      state.aiTarget.x = fallback.x;
+      state.aiTarget.y = fallback.y;
+      state.aiTarget.timer = 0.12;
+    }
+
+    const aimToPlayer = Math.atan2(p1.y - ai.y, p1.x - ai.x);
+    ai.aiAimAngle = approachAngle(ai.aiAimAngle || aimToPlayer, aimToPlayer, aiProfile.aimTurnSpeed * dt);
+    ai.angle = ai.aiAimAngle;
 
     if (sees && Math.hypot(p1.x - ai.x, p1.y - ai.y) < aiProfile.shotRange) {
-      const jitteredAngle = ai.angle + rand(-aiProfile.aimJitter, aiProfile.aimJitter);
-      shootBullet(ai, jitteredAngle, aiProfile.reload);
+      ai.aiBurstPause = Math.max(0, ai.aiBurstPause - dt);
+      if (ai.aiBurstShotsLeft <= 0 && ai.aiBurstPause <= 0) {
+        ai.aiBurstShotsLeft = ((rand(aiProfile.burstMin, aiProfile.burstMax + 1) | 0) || 1);
+      }
+
+      if (ai.aiBurstShotsLeft > 0 && ai.reload <= 0) {
+        const jitteredAngle = ai.angle + rand(-aiProfile.aimJitter, aiProfile.aimJitter);
+        shootBullet(ai, jitteredAngle, aiProfile.reload);
+        ai.aiBurstShotsLeft -= 1;
+        if (ai.aiBurstShotsLeft <= 0) {
+          ai.aiBurstPause = rand(aiProfile.burstPauseMin, aiProfile.burstPauseMax);
+        }
+      }
+    } else {
+      ai.aiBurstShotsLeft = 0;
     }
+
+    ai.lastHp = ai.hp;
   }
 
   function updateBullets(dt) {
@@ -723,6 +926,12 @@
       const winnerName = winnerId === 1 ? state.player1Name : state.player2Name;
       state.phase = "match-over";
       showOverlay("Match Winner!", `${winnerName} wins the match ${state.targetWins}-${Math.min(state.wins1, state.wins2)}.`, true);
+      overlayBtn.textContent = "Play Again";
+      menuBtn.hidden = false;
+      if (state.mode === "ai") {
+        overlayAiDifficulty.value = state.aiDifficulty;
+        overlayAiDifficultyWrap.hidden = false;
+      }
       return;
     }
 
@@ -789,14 +998,11 @@
   }
 
   function drawBackground() {
-    const g = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    g.addColorStop(0, "#07173a");
-    g.addColorStop(1, "#153067");
-    ctx.fillStyle = g;
+    ctx.fillStyle = "#e4e4e4";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.globalAlpha = 0.12;
-    ctx.strokeStyle = "#a3d8ff";
+    ctx.globalAlpha = 0.14;
+    ctx.strokeStyle = "#cfcfcf";
     for (let x = 0; x < canvas.width; x += CELL) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -814,10 +1020,8 @@
 
   function drawWalls() {
     for (const wall of state.walls) {
-      ctx.fillStyle = "#f8e38e";
+      ctx.fillStyle = "#000000";
       ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
-      ctx.fillStyle = "#d2b24f";
-      ctx.fillRect(wall.x + 1, wall.y + 1, Math.max(0, wall.w - 2), Math.max(0, wall.h - 2));
     }
   }
 
@@ -844,7 +1048,7 @@
   function drawBullets() {
     for (const bullet of state.bullets) {
       if (bullet.type === "sniper") {
-        ctx.fillStyle = "#ffe98a";
+        ctx.fillStyle = "#8B0000";
       } else if (bullet.type === "bouncy") {
         ctx.fillStyle = "#dba7ff";
       } else if (bullet.type === "big") {
@@ -899,25 +1103,54 @@
       ctx.fillStyle = tank.id === 1 ? "#6ec3ff" : "#ff8b8b";
       ctx.fillRect(x, y, width * hpPct, 5);
 
-      if (
-        tank.powerTimers.doubleDamage > 0 ||
-        tank.powerTimers.rapidFire > 0 ||
-        tank.powerTimers.sniperRounds > 0 ||
-        tank.powerTimers.bouncyRounds > 0 ||
-        tank.powerTimers.bigRounds > 0
-      ) {
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 9px Trebuchet MS";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-        const tags = [];
-        if (tank.powerTimers.doubleDamage > 0) tags.push("2X");
-        if (tank.powerTimers.rapidFire > 0) tags.push("RF");
-        if (tank.powerTimers.sniperRounds > 0) tags.push("SNP");
-        if (tank.powerTimers.bouncyRounds > 0) tags.push("BOU");
-        if (tank.powerTimers.bigRounds > 0) tags.push("BIG");
-        const tag = tags.join("+");
-        ctx.fillText(tag, tank.x, y - 2);
+      // Draw power-up timer bars
+      let barY = y - 8;
+      const barHeight = 3;
+      const maxDuration = 5; // Max power-up duration
+      
+      if (tank.powerTimers.doubleDamage > 0) {
+        const progress = tank.powerTimers.doubleDamage / maxDuration;
+        ctx.fillStyle = "#0f172e";
+        ctx.fillRect(x, barY, width, barHeight);
+        ctx.fillStyle = "#ff6f3c";
+        ctx.fillRect(x, barY, width * progress, barHeight);
+        barY -= 5;
+      }
+      
+      if (tank.powerTimers.rapidFire > 0) {
+        const progress = tank.powerTimers.rapidFire / 8; // RF lasts 8 seconds
+        ctx.fillStyle = "#0f172e";
+        ctx.fillRect(x, barY, width, barHeight);
+        ctx.fillStyle = "#4dd1ff";
+        ctx.fillRect(x, barY, width * progress, barHeight);
+        barY -= 5;
+      }
+      
+      if (tank.powerTimers.sniperRounds > 0) {
+        const progress = tank.powerTimers.sniperRounds / maxDuration;
+        ctx.fillStyle = "#0f172e";
+        ctx.fillRect(x, barY, width, barHeight);
+        ctx.fillStyle = "#ffd95c";
+        ctx.fillRect(x, barY, width * progress, barHeight);
+        barY -= 5;
+      }
+      
+      if (tank.powerTimers.bouncyRounds > 0) {
+        const progress = tank.powerTimers.bouncyRounds / maxDuration;
+        ctx.fillStyle = "#0f172e";
+        ctx.fillRect(x, barY, width, barHeight);
+        ctx.fillStyle = "#d08fff";
+        ctx.fillRect(x, barY, width * progress, barHeight);
+        barY -= 5;
+      }
+      
+      if (tank.powerTimers.bigRounds > 0) {
+        const progress = tank.powerTimers.bigRounds / maxDuration;
+        ctx.fillStyle = "#0f172e";
+        ctx.fillRect(x, barY, width, barHeight);
+        ctx.fillStyle = "#ff8bc4";
+        ctx.fillRect(x, barY, width * progress, barHeight);
+        barY -= 5;
       }
     }
   }
@@ -958,41 +1191,61 @@
     requestAnimationFrame(frame);
   }
 
-  function startFromSetup() {
+  function applyNamesAndHud() {
     const rawName = playerNameInput.value.trim();
     state.player1Name = rawName || "Player 1";
-    state.mode = modeSelect.value;
-    state.aiDifficulty = difficultySelect.value;
     state.player2Name = state.mode === "2p" ? "Player 2" : "AI";
     controlsText.textContent =
       state.mode === "2p"
         ? "P1: WASD + Left Click/F. P2: Arrow Keys + L."
         : `P1: WASD + Left Click/F. Opponent: AI tank (${state.aiDifficulty}).`;
+  }
 
-    setupPanel.style.display = "none";
+  function startFromMenu(mode) {
+    state.mode = mode;
+    if (mode === "ai") {
+      state.aiDifficulty = difficultySelect.value;
+    }
+    applyNamesAndHud();
+    menuScreen.classList.add("hidden");
+    hud.style.display = "grid";
+    actions.style.display = "block";
+    arenaWrap.style.display = "block";
+    hideOverlay();
     beginMatch();
   }
 
-  function updateDifficultyVisibility() {
-    const hidden = modeSelect.value !== "ai";
-    difficultySelect.hidden = hidden;
-    difficultyLabel.hidden = hidden;
+  function resetForReplay() {
+    if (state.mode === "ai") {
+      state.aiDifficulty = overlayAiDifficulty.value;
+    }
+    applyNamesAndHud();
+    hideOverlay();
+    beginMatch();
   }
 
-  function resetForReplay() {
+  function showMainMenu() {
     state.phase = "idle";
     state.bullets = [];
     state.particles = [];
     state.walls = [];
     state.tanks = [];
-    setupPanel.style.display = "grid";
-    showOverlay("Maze Warface", "Enter your name and start the match.");
+    state.powerups = [];
+    menuScreen.classList.remove("hidden");
+    hud.style.display = "none";
+    actions.style.display = "none";
+    arenaWrap.style.display = "none";
+    overlay.classList.remove("visible");
     updateHud();
   }
 
-  startBtn.addEventListener("click", startFromSetup);
+  menuAiBtn.addEventListener("click", () => startFromMenu("ai"));
+  menu2pBtn.addEventListener("click", () => startFromMenu("2p"));
+  menuControlsBtn.addEventListener("click", () => {
+    menuControls.hidden = !menuControls.hidden;
+  });
   overlayBtn.addEventListener("click", resetForReplay);
-  modeSelect.addEventListener("change", updateDifficultyVisibility);
+  menuBtn.addEventListener("click", showMainMenu);
   fullscreenBtn.addEventListener("click", toggleFullscreen);
 
   document.addEventListener("keydown", (event) => {
@@ -1015,7 +1268,6 @@
   });
 
   updateHud();
-  updateDifficultyVisibility();
-  showOverlay("Maze Warface", "Enter your name and start the match.");
+  showMainMenu();
   requestAnimationFrame(frame);
 })();
