@@ -50,7 +50,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 24px 18px 28px;
   background:
     radial-gradient(circle at 50% 10%, rgba(34, 154, 255, 0.18), transparent 26%),
@@ -114,6 +114,8 @@ body {
 .menu-container {
   width: 100%;
   max-width: 980px;
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
   background:
     linear-gradient(180deg, rgba(8, 12, 33, 0.9), rgba(9, 14, 46, 0.94)),
     url("./assets/menu-bg.jpg") center/cover;
@@ -125,7 +127,7 @@ body {
     0 22px 70px rgba(0, 0, 0, 0.68),
     0 0 60px rgba(51, 123, 255, 0.22);
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 .menu-container::before {
@@ -556,7 +558,6 @@ canvas {
 
 @media (max-width: 760px) {
   .menu-screen {
-    justify-content: flex-start;
     padding-top: 18px;
   }
 
