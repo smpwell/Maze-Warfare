@@ -9,6 +9,7 @@
   const menuControls = document.getElementById("menu-controls");
   const fullscreenBtn = document.getElementById("fullscreen-btn");
   const difficultySelect = document.getElementById("difficulty-select");
+  const menuDifficultyGroup = difficultySelect ? difficultySelect.closest(".form-group") : null;
   const playerNameInput = document.getElementById("player-name");
 
   const overlay = document.getElementById("overlay");
@@ -1214,8 +1215,18 @@
         : `P1: WASD + Left Click/F. Opponent: AI tank (${state.aiDifficulty}).`;
   }
 
+  function syncModeUi() {
+    const isAiMode = state.mode === "ai";
+    if (menuDifficultyGroup) {
+      menuDifficultyGroup.hidden = !isAiMode;
+    }
+    difficultySelect.disabled = !isAiMode;
+    overlayAiDifficultyWrap.hidden = !isAiMode;
+  }
+
   function startFromMenu(mode) {
     state.mode = mode;
+    syncModeUi();
     if (mode === "ai") {
       state.aiDifficulty = difficultySelect.value;
     }
@@ -1249,6 +1260,7 @@
     actions.style.display = "none";
     arenaWrap.style.display = "none";
     overlay.classList.remove("visible");
+    syncModeUi();
     updateHud();
   }
 

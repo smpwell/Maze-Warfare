@@ -44,6 +44,9 @@ body {
   inset: 0;
   width: 100vw;
   height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -54,6 +57,13 @@ body {
     radial-gradient(circle at 18% 70%, rgba(255, 54, 168, 0.18), transparent 28%),
     linear-gradient(135deg, #050816 0%, #10134a 50%, #2b0730 100%);
   z-index: 100;
+}
+
+@media (max-height: 820px) {
+  .menu-screen {
+    justify-content: flex-start;
+    padding-top: 18px;
+  }
 }
 
 .menu-screen.hidden {
