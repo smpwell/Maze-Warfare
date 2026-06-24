@@ -54,6 +54,7 @@
     phase: "idle",
     mode: "ai",
     aiDifficulty: "medium",
+    aiDifficultyLocked: false,
     player1Name: "Player 1",
     player2Name: "Player 2",
     round: 1,
@@ -549,6 +550,11 @@
     updateHud();
   }
 
+  function setAiDifficultyLocked(locked) {
+    state.aiDifficultyLocked = locked;
+    syncModeUi();
+  }
+
   function moveTank(tank, dt, moveX, moveY) {
     const mag = Math.hypot(moveX, moveY) || 1;
     const dx = (moveX / mag) * tank.speed * dt;
@@ -939,10 +945,14 @@
     if (state.wins1 >= state.targetWins || state.wins2 >= state.targetWins) {
       const winnerName = winnerId === 1 ? state.player1Name : state.player2Name;
       state.phase = "match-over";
+      if (state.mode === "ai") {
+        setAiDifficultyLocked(false);
+      }
       showOverlay("Match Winner!", `${winnerName} wins the match ${state.targetWins}-${Math.min(state.wins1, state.wins2)}.`, true);
-      overlayBtn.textContent = "Play Again";
+      overlayBtn.textContent = "Play";
       menuBtn.hidden = false;
       if (state.mode === "ai") {
+        overlayText.textContent = `${winnerName} wins the match. Choose AI difficulty, then press Play (3s countdown).`;
         overlayAiDifficulty.value = state.aiDifficulty;
         overlayAiDifficultyWrap.hidden = false;
       }
@@ -1220,16 +1230,20 @@
     if (menuDifficultyGroup) {
       menuDifficultyGroup.hidden = !isAiMode;
     }
-    difficultySelect.disabled = !isAiMode;
+    difficultySelect.disabled = !isAiMode || state.aiDifficultyLocked;
     overlayAiDifficultyWrap.hidden = !isAiMode;
+    overlayAiDifficulty.disabled = !isAiMode || state.aiDifficultyLocked || state.phase !== "match-over";
   }
 
   function startFromMenu(mode) {
     state.mode = mode;
-    syncModeUi();
     if (mode === "ai") {
       state.aiDifficulty = difficultySelect.value;
+      setAiDifficultyLocked(true);
+    } else {
+      setAiDifficultyLocked(false);
     }
+    syncModeUi();
     applyNamesAndHud();
     menuScreen.classList.add("hidden");
     hud.style.display = "grid";
@@ -1242,6 +1256,7 @@
   function resetForReplay() {
     if (state.mode === "ai") {
       state.aiDifficulty = overlayAiDifficulty.value;
+      setAiDifficultyLocked(true);
     }
     applyNamesAndHud();
     hideOverlay();
@@ -1255,6 +1270,7 @@
     state.walls = [];
     state.tanks = [];
     state.powerups = [];
+    setAiDifficultyLocked(false);
     menuScreen.classList.remove("hidden");
     hud.style.display = "none";
     actions.style.display = "none";
