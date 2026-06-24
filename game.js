@@ -55,6 +55,7 @@
     mode: "ai",
     aiDifficulty: "medium",
     aiDifficultyLocked: false,
+    pendingAiMenuStart: false,
     player1Name: "Player 1",
     player2Name: "Player 2",
     round: 1,
@@ -1237,9 +1238,11 @@
 
   function startFromMenu(mode) {
     state.mode = mode;
+    state.pendingAiMenuStart = false;
+
     if (mode === "ai") {
       state.aiDifficulty = difficultySelect.value;
-      setAiDifficultyLocked(true);
+      setAiDifficultyLocked(false);
     } else {
       setAiDifficultyLocked(false);
     }
@@ -1249,11 +1252,32 @@
     hud.style.display = "grid";
     actions.style.display = "block";
     arenaWrap.style.display = "block";
+
+    if (mode === "ai") {
+      state.phase = "idle";
+      state.pendingAiMenuStart = true;
+      showOverlay("Player vs AI", "Choose AI difficulty, then press Play (3s countdown).", true, "Play");
+      menuBtn.hidden = false;
+      overlayAiDifficulty.value = state.aiDifficulty;
+      overlayAiDifficultyWrap.hidden = false;
+      return;
+    }
+
     hideOverlay();
     beginMatch();
   }
 
   function resetForReplay() {
+    if (state.pendingAiMenuStart && state.mode === "ai") {
+      state.aiDifficulty = overlayAiDifficulty.value;
+      setAiDifficultyLocked(true);
+      state.pendingAiMenuStart = false;
+      applyNamesAndHud();
+      hideOverlay();
+      beginMatch();
+      return;
+    }
+
     if (state.mode === "ai") {
       state.aiDifficulty = overlayAiDifficulty.value;
       setAiDifficultyLocked(true);
@@ -1265,6 +1289,7 @@
 
   function showMainMenu() {
     state.phase = "idle";
+    state.pendingAiMenuStart = false;
     state.bullets = [];
     state.particles = [];
     state.walls = [];
