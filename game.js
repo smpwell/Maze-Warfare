@@ -652,6 +652,19 @@
     if (isPressed("KeyD")) mx += 1;
 
     moveTank(p1, dt, mx, my);
+    if (state.mode === "2p") {
+      if (mx !== 0 || my !== 0) {
+        p1.angle = Math.atan2(my, mx);
+      } else {
+        p1.angle = Math.atan2(p1.lastMoveY, p1.lastMoveX);
+      }
+
+      if (justPressed("KeyF")) {
+        shootBullet(p1, p1.angle);
+      }
+      return;
+    }
+
     p1.angle = Math.atan2(state.mouse.y - p1.y, state.mouse.x - p1.x);
 
     if (state.mouse.down || justPressed("KeyF")) {
@@ -1197,7 +1210,7 @@
     state.player2Name = state.mode === "2p" ? "Player 2" : "AI";
     controlsText.textContent =
       state.mode === "2p"
-        ? "P1: WASD + Left Click/F. P2: Arrow Keys + L."
+        ? "P1: WASD + F (aim with movement). P2: Arrow Keys + L."
         : `P1: WASD + Left Click/F. Opponent: AI tank (${state.aiDifficulty}).`;
   }
 
