@@ -3,6 +3,7 @@
   const ctx = canvas.getContext("2d");
 
   const menuScreen = document.getElementById("menu-screen");
+  const menuTitle = document.getElementById("menu-title");
   const menuAiBtn = document.getElementById("menu-ai-btn");
   const menu2pBtn = document.getElementById("menu-2p-btn");
   const menuControlsBtn = document.getElementById("menu-controls-btn");
@@ -1523,27 +1524,84 @@
     updateHud();
   }
 
+  let menuScrollRaf = 0;
+
+  function cancelMenuScrollAnimation() {
+    if (menuScrollRaf) {
+      cancelAnimationFrame(menuScrollRaf);
+      menuScrollRaf = 0;
+    }
+  }
+
+  function animateMenuScrollTo(targetTop, duration = 320) {
+    cancelMenuScrollAnimation();
+    const startTop = menuScreen.scrollTop;
+    const maxTop = Math.max(0, menuScreen.scrollHeight - menuScreen.clientHeight);
+    const endTop = clamp(targetTop, 0, maxTop);
+    if (Math.abs(endTop - startTop) < 1) {
+      menuScreen.scrollTop = endTop;
+      return;
+    }
+
+    const startTime = performance.now();
+    const easeInOut = (t) => 0.5 - Math.cos(Math.PI * t) / 2;
+
+    const tick = (now) => {
+      const t = clamp((now - startTime) / duration, 0, 1);
+      menuScreen.scrollTop = startTop + (endTop - startTop) * easeInOut(t);
+      if (t < 1) {
+        menuScrollRaf = requestAnimationFrame(tick);
+      } else {
+        menuScrollRaf = 0;
+      }
+    };
+
+    menuScrollRaf = requestAnimationFrame(tick);
+  }
+
   menuAiBtn.addEventListener("click", () => startFromMenu("ai"));
   menu2pBtn.addEventListener("click", () => startFromMenu("2p"));
   menuControlsBtn.addEventListener("click", () => {
     const isOpening = menuControls.hidden;
     menuControls.hidden = !menuControls.hidden;
-    if (isOpening) {
-      menuControls.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (!isOpening) {
+      cancelMenuScrollAnimation();
+      return;
     }
+
+    const prefersReducedMotion =
+      typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    requestAnimationFrame(() => {
+      const targetTop = menuControls.offsetTop - 20;
+      if (prefersReducedMotion) {
+        cancelMenuScrollAnimation();
+        menuScreen.scrollTop = Math.max(0, targetTop);
+      } else {
+        animateMenuScrollTo(targetTop, 360);
+      }
+    });
   });
   if (menuPowersBackBtn) {
-    menuPowersBackBtn.addEventListener("click", () => {
-      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      menuScreen.scrollTo({ top: 0, behavior: prefersReducedMotion ? "auto" : "smooth" });
-      window.scrollTo({ top: 0, behavior: prefersReducedMotion ? "auto" : "smooth" });
+    menuPowersBackBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const prefersReducedMotion =
+        typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      cancelMenuScrollAnimation();
+      menuControls.hidden = true;
+
       if (prefersReducedMotion) {
-        menuControls.hidden = true;
-        return;
+        menuScreen.scrollTop = 0;
+      } else {
+        animateMenuScrollTo(0, 320);
       }
-      setTimeout(() => {
-        menuControls.hidden = true;
-      }, 220);
+
+      if (menuTitle) {
+        setTimeout(() => {
+          menuTitle.focus({ preventScroll: true });
+        }, 0);
+      }
     });
   }
   overlayBtn.addEventListener("click", resetForReplay);
